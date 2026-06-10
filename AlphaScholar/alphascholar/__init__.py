@@ -1,6 +1,6 @@
 
 from .components import navbar, footbar
-from .pages import index, login, signup
+from .pages import index, login, signup, tracker, about
 
 
 __author__ = "Zhao Yu"

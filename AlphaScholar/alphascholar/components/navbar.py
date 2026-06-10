@@ -24,9 +24,8 @@ def menu() -> rx.Component:
                 rx.spacer(),
                 rx.hstack(
                     navbar_link("Home", "/#"),
-                    navbar_link("About", "/#"),
-                    # navbar_link("Pricing", "/#"),
-                    # navbar_link("Contact", "/#"),
+                    navbar_link("Tracker", "/tracker"),
+                    navbar_link("About", "/about"),
                     spacing="5",
                 ),
                 rx.menu.root(

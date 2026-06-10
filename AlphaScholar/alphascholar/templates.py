@@ -12,7 +12,9 @@ def web_structure(page: Callable[[], rx.Component]) -> rx.Component:
     
     return rx.vstack(
         navbar(),
+        rx.spacer(),
         page(),
+        rx.spacer(),
         footbar(),
 
         spacing="1",
