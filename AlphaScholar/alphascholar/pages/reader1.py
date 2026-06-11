@@ -3,7 +3,7 @@ import os
 from openai import OpenAI
 from typing import Literal
 import asyncio
-import PyPDF2  # 用于提取 PDF 文本
+import PyPDF2
 
 from ..templates import web_structure
 
@@ -17,45 +17,41 @@ client = OpenAI(api_key=OPENAI_API_KEY, base_url=OPENAI_BASE_URL)
 
 # ------------------- States --------------------
 class ReaderState(rx.State):
-    uploaded_files: list[str] = []          # 文件名列表（用于展示）
-    pdf_url: str = ""                       # 上传后 PDF 的可访问 URL
-    text_area_value_left: str = "PDF"       # 左侧分段控件值："PDF" 或 "OCR"
-    text_area_value_right: str = "Summary"  # 右侧分段控件值
-    ocr_text: str = ""                      # OCR 提取的原始文本
-    summary_text: str = ""                  # 生成的总结文本
-    is_processing: bool = False             # 处理中状态（OCR/总结）
+    uploaded_files: list[str] = []
+    pdf_url: str = ""
+    text_area_value_left: str = "PDF"
+    text_area_value_right: str = "Summary"
+    ocr_text: str = ""
+    summary_text: str = ""
+    is_processing: bool = False
 
     def set_control_left(self, value: str | list[str]):
-        if isinstance(value, list):
-            value = value[0] if value else "PDF"
+        # if isinstance(value, list):
+        #     value = value[0] if value else "PDF"
         self.text_area_value_left = value
 
     def set_control_right(self, value: str | list[str]):
-        if isinstance(value, list):
-            value = value[0] if value else "Summary"
+        # if isinstance(value, list):
+        #     value = value[0] if value else "Summary"
         self.text_area_value_right = value
 
     async def upload_file(self, files: list[rx.UploadFile]):
-        """处理文件上传，保存文件并记录 URL"""
         for file in files:
             data = await file.read()
             path = rx.get_upload_dir() / file.name
             with path.open("wb") as f:
                 f.write(data)
-            # 存储文件名和可访问的 URL
             self.uploaded_files.append(file.name)
-            # self.pdf_url = rx.get_upload_url(file.name)  # 获取相对 URL（如 /uploaded_files/xxx.pdf）
-            self.pdf_url = f"/{rx.get_upload_url(file.name)}"  # 确保以斜杠开头
+            self.pdf_url = file.name
+            print(self.pdf_url)
 
     @rx.var
     def show_uploaded_files(self) -> str:
-        """返回已上传文件的文件名字符串"""
         if self.uploaded_files:
             return ", ".join(self.uploaded_files)
         return "No files uploaded."
 
     def clear_file(self):
-        """清空所有上传文件并重置相关状态"""
         self.uploaded_files.clear()
         self.pdf_url = ""
         self.ocr_text = ""
@@ -66,16 +62,13 @@ class ReaderState(rx.State):
 
     @rx.event
     async def run_ocr(self):
-        """提取 PDF 文本（异步调用同步阻塞操作）"""
         if not self.uploaded_files:
             rx.toast.error("请先上传 PDF 文件")
             return
         self.is_processing = True
         yield
         try:
-            # 获取第一个上传文件的本地路径
             file_path = rx.get_upload_dir() / self.uploaded_files[0]
-            # 将同步 OCR 操作放到线程中执行，避免阻塞
             text = await asyncio.to_thread(extract_pdf_text, file_path)
             self.ocr_text = text
             rx.toast.success("OCR 提取完成")
@@ -86,8 +79,6 @@ class ReaderState(rx.State):
 
     @rx.event
     async def summarize(self):
-        """根据右侧选择的方式（Summary/Extensive/Intensive）生成总结"""
-        # 优先使用 OCR 文本，若为空则提示错误
         source_text = self.ocr_text
         if not source_text.strip():
             rx.toast.error("请先运行 OCR 提取文本")
@@ -117,7 +108,6 @@ class ReaderState(rx.State):
 
 # ------------------- 辅助函数 --------------------
 def extract_pdf_text(file_path: str) -> str:
-    """使用 PyPDF2 提取 PDF 文本"""
     text = []
     with open(file_path, "rb") as f:
         reader = PyPDF2.PdfReader(f)
@@ -129,8 +119,7 @@ def extract_pdf_text(file_path: str) -> str:
 
 
 def build_summary_prompt(text: str, mode: str) -> str:
-    """根据总结模式构建不同的提示词"""
-    base = f"请根据以下文本内容生成{mode}总结。\n\n文本：\n{text[:4000]}"  # 截断避免超出 token 限制
+    base = f"请根据以下文本内容生成{mode}总结。\n\n文本：\n{text[:4000]}"
     if mode == "Summary":
         return base + "\n\n要求：简洁概括核心内容，200字左右。"
     elif mode == "Extensive":
@@ -199,7 +188,7 @@ def reader_card() -> rx.Component:
     return rx.card(
         rx.heading("Reader", size="5"),
         rx.hstack(
-            # 左侧区域：PDF 查看 / OCR 文本
+            # 左侧：PDF/OCR
             rx.card(
                 rx.vstack(
                     rx.segmented_control.root(
@@ -209,18 +198,18 @@ def reader_card() -> rx.Component:
                         on_change=ReaderState.set_control_left,
                         width="100%",
                     ),
-                    # 根据选择显示 iframe 或文本区域
                     rx.cond(
                         ReaderState.text_area_value_left == "PDF",
                         rx.cond(
                             ReaderState.pdf_url != "",
-                            rx.el.iframe(
-                                src=ReaderState.pdf_url,
+                            # 修正 embed 参数顺序：子元素在前，关键字参数在后
+                            rx.el.embed(
+                                src=rx.get_upload_url(ReaderState.pdf_url),
                                 width="100%",
                                 height="600px",
                             ),
                             rx.center(
-                                rx.text("No PDF uploaded. Please upload a PDF first.", color="gray"),
+                                rx.text("No PDF uploaded.", color="gray"),
                                 width="100%",
                                 height="600px",
                             ),
@@ -238,7 +227,7 @@ def reader_card() -> rx.Component:
                 ),
                 width="50%",
             ),
-            # 右侧区域：总结类型选择 + 总结结果
+            # 右侧：总结
             rx.card(
                 rx.vstack(
                     rx.hstack(
@@ -267,7 +256,7 @@ def reader_card() -> rx.Component:
                         size="2",
                         variant="classic",
                         width="100%",
-                        height='600px',
+                        height="600px",
                     ),
                     spacing="3",
                 ),
