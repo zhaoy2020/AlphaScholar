@@ -78,9 +78,7 @@ def login_default() -> rx.Component:
 @web_structure
 def login() -> rx.Component:
     '''Login page'''
-    return rx.container(
-        rx.center(
+    return rx.center(
             login_default(),
             min_height="85vh",
-        ),
-    )
+            )

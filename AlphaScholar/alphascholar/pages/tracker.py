@@ -1,6 +1,7 @@
 import reflex as rx
 from typing import List, Dict, Literal
 import os
+import math
 import requests
 from xml.etree import ElementTree
 from collections import Counter
@@ -11,114 +12,79 @@ from ..templates import web_structure
 
 # ==================== 配置 ==================== #
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "your-openai-api-key-here")
-print(f"[OpenAI] API Key: {OPENAI_API_KEY}")
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://openai.cau.edu.cn/v1")
 print(f"[OpenAI] Base URL: {OPENAI_BASE_URL}")
 MODEL_NAME = "qwen3.6"
 client = OpenAI(api_key=OPENAI_API_KEY, base_url=OPENAI_BASE_URL)
 
 # ⚠️ 请务必将下面的邮箱替换为您的真实邮箱，否则 PubMed 会拒绝服务！
-ENTREZ_EMAIL = ""   # 修改这里！
+ENTREZ_EMAIL = "your-real-email@example.com"   # 修改这里！
 
 
-# ==================== 检索函数（requests + xml.etree） ==================== #
+# ==================== 检索函数 ==================== #
 def search_on_pubmed(query: str, max_results: int = 5) -> List[Dict]:
-    """使用 NCBI E-utilities 检索 PubMed，返回文献列表"""
+    """使用 NCBI E-utilities 检索 PubMed"""
     base_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
     articles = []
 
     try:
-        # 1. 搜索 PMID
         search_params = {
-            "db": "pubmed",
-            "term": query,
-            "retmax": max_results,
-            "retmode": "json",
-            "sort": "relevance",
-            "email": ENTREZ_EMAIL,
-            "tool": "AlphaScholar",
+            "db": "pubmed", "term": query, "retmax": max_results,
+            "retmode": "json", "sort": "relevance",
+            "email": ENTREZ_EMAIL, "tool": "AlphaScholar",
         }
         search_resp = requests.get(f"{base_url}/esearch.fcgi", params=search_params)
         search_resp.raise_for_status()
         search_data = search_resp.json()
         id_list = search_data.get("esearchresult", {}).get("idlist", [])
         if not id_list:
-            print("[PubMed] 没有找到相关文献")
             return articles
 
-        # 2. 获取文献详情
         fetch_params = {
-            "db": "pubmed",
-            "id": ",".join(id_list),
-            "retmode": "xml",
-            "email": ENTREZ_EMAIL,
-            "tool": "AlphaScholar",
+            "db": "pubmed", "id": ",".join(id_list),
+            "retmode": "xml", "email": ENTREZ_EMAIL, "tool": "AlphaScholar",
         }
         fetch_resp = requests.get(f"{base_url}/efetch.fcgi", params=fetch_params)
         fetch_resp.raise_for_status()
-        # 打印原始响应前500字符，方便调试
-        raw_xml = fetch_resp.text
-        print("[PubMed] 原始响应（前500字符）:", raw_xml[:500])
+        root = ElementTree.fromstring(fetch_resp.text)
 
-        # 3. 解析 XML
-        root = ElementTree.fromstring(raw_xml)
         for article_elem in root.findall(".//PubmedArticle"):
             medline = article_elem.find(".//MedlineCitation")
-            if medline is None:
-                continue
+            if medline is None: continue
             pmid = medline.findtext("PMID", "")
             article_info = medline.find("Article")
-            if article_info is None:
-                continue
+            if article_info is None: continue
 
             title = article_info.findtext("ArticleTitle", "")
-            # 摘要
-            abstract_parts = []
-            for abstract_elem in article_info.findall(".//Abstract/AbstractText"):
-                text = "".join(abstract_elem.itertext())
-                if text:
-                    abstract_parts.append(text)
+            abstract_parts = [
+                "".join(e.itertext()) for e in article_info.findall(".//Abstract/AbstractText")
+            ]
             abstract = " ".join(abstract_parts)
 
-            # 作者
             authors_list = []
-            for author in article_info.findall(".//AuthorList/Author"):
-                last = author.findtext("LastName", "")
-                fore = author.findtext("ForeName", "")
-                if last:
-                    authors_list.append(f"{fore} {last}".strip())
+            for a in article_info.findall(".//AuthorList/Author"):
+                last = a.findtext("LastName", "")
+                fore = a.findtext("ForeName", "")
+                if last: authors_list.append(f"{fore} {last}".strip())
             authors = ", ".join(authors_list[:3])
-            if len(authors_list) > 3:
-                authors += " et al."
+            if len(authors_list) > 3: authors += " et al."
 
             journal = article_info.findtext(".//Journal/Title", "")
-            # 年份
             pub_date = ""
-            date_completed = medline.find(".//DateCompleted")
-            if date_completed is not None:
-                pub_date = date_completed.findtext("Year", "")
+            date_comp = medline.find(".//DateCompleted")
+            if date_comp is not None: pub_date = date_comp.findtext("Year", "")
             if not pub_date:
-                pub_date_elem = article_info.find(".//Journal/JournalIssue/PubDate")
-                if pub_date_elem is not None:
-                    pub_date = pub_date_elem.findtext("Year", "") or pub_date_elem.findtext("MedlineDate", "")
+                pub_elem = article_info.find(".//Journal/JournalIssue/PubDate")
+                if pub_elem is not None:
+                    pub_date = pub_elem.findtext("Year", "") or pub_elem.findtext("MedlineDate", "")
 
             articles.append({
-                "pmid": pmid,
-                "title": title,
-                "authors": authors,
-                "journal": journal,
-                "year": pub_date if pub_date else "未知",
+                "pmid": pmid, "title": title, "authors": authors,
+                "journal": journal, "year": pub_date if pub_date else "未知",
                 "abstract": abstract[:1500]
             })
-    except requests.RequestException as e:
-        print(f"[PubMed 网络请求失败] {e}")
-        raise RuntimeError(f"网络错误：{e}")
-    except ElementTree.ParseError as e:
-        print(f"[PubMed XML 解析失败] {e}")
-        print("[PubMed] 无法解析的响应内容:", fetch_resp.text[:500])
-        raise RuntimeError("PubMed 返回了无效数据，请检查邮箱设置或稍后重试。")
     except Exception as e:
-        print(f"[PubMed 未知错误] {e}")
+        print(f"[PubMed] 检索失败: {e}")
         raise RuntimeError(f"检索失败：{e}")
 
     return articles
@@ -147,16 +113,11 @@ def summarize_results(query: str, articles: List[Dict]) -> str:
         f"Journal: {art['journal']} ({art['year']})\nAbstract: {art['abstract']}"
         for i, art in enumerate(articles)
     )
-    prompt = f"""
-你是一位专业的科研助手。请根据以下文献，围绕主题"{query}"进行综述。
-要求：
-1. 概括共同方向或方法；
-2. 指出研究缺口或未来方向；
-3. 中文撰写，300字左右。
+    prompt = f"""你是一位专业的科研助手。请根据以下文献，围绕主题"{query}"进行综述。
+要求：1. 概括共同方向或方法；2. 指出研究缺口或未来方向；3. 中文撰写，300字左右。
 
 文献信息：
-{articles_text}
-"""
+{articles_text}"""
     try:
         response = client.chat.completions.create(
             model=MODEL_NAME,
@@ -164,11 +125,9 @@ def summarize_results(query: str, articles: List[Dict]) -> str:
                 {"role": "system", "content": "你是严谨的科研助手，请用中文回答。"},
                 {"role": "user", "content": prompt}
             ],
-            temperature=0.3,
-            max_tokens=600
+            temperature=0.3, max_tokens=600
         )
         return response.choices[0].message.content
-    
     except Exception as e:
         return f"Failed to generate summary: {str(e)}"
 
@@ -179,29 +138,71 @@ class TrackerState(rx.State):
     method: str = "pubmed"
     max_results: int = 5
 
+    start_year: str = ""
+    end_year: str = ""
+
     articles: List[Dict] = []
     summary: str = ""
 
-    stats_year: List[List] = []
-    stats_journal: List[List] = []
+    stats_year: List[List] = []          # [year, count]
+    stats_journal: List[List] = []       # [journal, count]
     stats_total: int = 0
+    cns_count: int = 0
+    cns_percentage: float = 0.0
 
     is_searching: bool = False
     is_summarizing: bool = False
+
+    current_page: int = 1
+    page_size: int = 5
+
+    @rx.var
+    def total_pages(self) -> int:
+        return max(1, math.ceil(len(self.articles) / self.page_size))
+
+    @rx.var
+    def paginated_articles(self) -> List[Dict]:
+        start = (self.current_page - 1) * self.page_size
+        end = start + self.page_size
+        return self.articles[start:end]
+
+    @rx.var
+    def page_numbers(self) -> List:
+        total = self.total_pages
+        current = self.current_page
+        numbers = []
+        if total <= 7:
+            numbers = list(range(1, total + 1))
+        else:
+            numbers.append(1)
+            if current > 3: numbers.append("...")
+            start = max(2, current - 1)
+            end = min(total - 1, current + 1)
+            numbers.extend(range(start, end + 1))
+            if current < total - 2: numbers.append("...")
+            numbers.append(total)
+        return numbers
+
+    def go_to_page(self, page: int):
+        if 1 <= page <= self.total_pages:
+            self.current_page = page
 
     def _compute_stats(self):
         year_cnt = Counter()
         journal_cnt = Counter()
         for art in self.articles:
             year = art.get("year", "未知")
-            if year:
-                year_cnt[year] += 1
+            if year: year_cnt[year] += 1
             journal = art.get("journal", "未知")
-            if journal:
-                journal_cnt[journal] += 1
+            if journal: journal_cnt[journal] += 1
         self.stats_year = [[yr, cnt] for yr, cnt in year_cnt.most_common()]
         self.stats_journal = [[j, cnt] for j, cnt in journal_cnt.most_common()]
         self.stats_total = len(self.articles)
+
+        cns_journals = {"science", "nature", "cell"}
+        cns_total = sum(c for j, c in journal_cnt.items() if j.lower() in cns_journals)
+        self.cns_count = cns_total
+        self.cns_percentage = round((cns_total / self.stats_total * 100), 1) if self.stats_total else 0
 
     def handle_search(self):
         if not self.query.strip():
@@ -214,12 +215,20 @@ class TrackerState(rx.State):
         self.stats_year = []
         self.stats_journal = []
         self.stats_total = 0
+        self.cns_count = 0
+        self.cns_percentage = 0.0
+        self.current_page = 1
 
         try:
-            print(f"[检索开始] query={self.query}, method={self.method}, max={self.max_results}")
-            results = search(self.query, self.method, self.max_results)
-            print(f"[检索完成] 获取到 {len(results)} 篇文献")
+            final_query = self.query.strip()
+            if self.start_year and self.end_year:
+                final_query += f" AND {self.start_year}:{self.end_year}[dp]"
+            elif self.start_year:
+                final_query += f" AND {self.start_year}:3000[dp]"
+            elif self.end_year:
+                final_query += f" AND 1800:{self.end_year}[dp]"
 
+            results = search(final_query, self.method, self.max_results)
             for art in results:
                 abstract = art.get("abstract", "")
                 art["abstract_short"] = (abstract[:300] + "...") if len(abstract) > 300 else abstract
@@ -230,7 +239,6 @@ class TrackerState(rx.State):
             if not results:
                 rx.toast.warning("未检索到相关文献，请更换关键词重试")
         except Exception as e:
-            print(f"[检索异常] {e}")
             rx.toast.error(f"检索失败: {e}")
         finally:
             self.is_searching = False
@@ -239,25 +247,20 @@ class TrackerState(rx.State):
         if not self.articles:
             rx.toast.error("请先检索文献")
             return
-
         self.is_summarizing = True
         self.summary = ""
         try:
-            summary = summarize_results(self.query, self.articles)
-            self.summary = summary
+            self.summary = summarize_results(self.query, self.articles)
         except Exception as e:
-            self.summary = f"Failed to generate summary: {str(e)}"
+            self.summary = f"总结失败: {e}"
         finally:
             self.is_summarizing = False
 
-    def set_query(self, value: str):
-        self.query = value
-
-    def set_method(self, value: str):
-        self.method = value
-
-    def set_max_results(self, value: list[int | float]):
-        self.max_results = value[0]
+    def set_query(self, value: str): self.query = value
+    def set_method(self, value: str): self.method = value
+    def set_max_results(self, value: list[int | float]): self.max_results = value[0]
+    def set_start_year(self, value: str): self.start_year = value
+    def set_end_year(self, value: str): self.end_year = value
 
 
 # ==================== 页面组件 ==================== #
@@ -265,9 +268,9 @@ def search_card():
     return rx.card(
         rx.vstack(
             rx.heading("文献检索与智能总结", size="5"),
-            rx.hstack(
+            rx.center(
                 rx.vstack(
-                    rx.heading("Search Query", size="2", color="gray"),
+                    rx.heading("Query", size="2", color="gray"),
                     rx.input(
                         placeholder="输入研究关键词（如：bacillus subtilis[tiab]）",
                         value=TrackerState.query,
@@ -276,39 +279,44 @@ def search_card():
                     ),
                     width="100%",
                 ),
+                rx.spacer(),
                 rx.vstack(
-                    rx.heading("Search Method", size="2", color="gray", width="100%"),
+                    rx.heading("Method", size="2", color="gray"),
                     rx.select(
-                        ["pubmed", "google_scholar"],
+                        ["pubmed", "google_scholar", "web_of_science"],
                         value=TrackerState.method,
                         on_change=TrackerState.set_method,
                         default_value="pubmed",
                     ),
+                ),
+                rx.vstack(
+                    rx.heading("Time", size="2", color="gray"),
+                    rx.hstack(
+                        rx.input(placeholder="Start", value=TrackerState.start_year,
+                                 on_change=TrackerState.set_start_year, width="100%"),
+                        rx.text(" ~ "),
+                        rx.input(placeholder="End", value=TrackerState.end_year,
+                                 on_change=TrackerState.set_end_year, width="100%"),
+                        spacing="1",
+                    ),
                     width="50%",
                 ),
                 rx.vstack(
-                    rx.heading(TrackerState.max_results, size="2", color="gray", width="100%"),
+                    rx.heading("Max: ", TrackerState.max_results, size="2", color="gray"),
                     rx.slider(
                         default_value=TrackerState.max_results,
-                        min=1,
-                        max=100,
+                        min=1, max=100,
                         on_change=TrackerState.set_max_results,
                         width="100%",
                     ),
                     width="50%",
-                    align_items="center",
                 ),
-                rx.button(
-                    "检索",
-                    on_click=TrackerState.handle_search,
-                    loading=TrackerState.is_searching,
-                    color_scheme="blue"
-                ),
+                rx.button("检索", on_click=TrackerState.handle_search,
+                          loading=TrackerState.is_searching, color_scheme="blue"),
                 width="100%",
                 spacing="3",
                 align="center"
             ),
-            width="100%",
         ),
         width="100%",
         padding="4"
@@ -321,7 +329,7 @@ def results_display():
         rx.vstack(
             rx.heading(f"Search results ({TrackerState.articles.length()})", size="4"),
             rx.foreach(
-                TrackerState.articles,
+                TrackerState.paginated_articles,
                 lambda art, idx: rx.card(
                     rx.vstack(
                         rx.hstack(
@@ -329,12 +337,8 @@ def results_display():
                             rx.text(art["journal"], size="1", color="gray"),
                             rx.text(art["year"], size="1", color="gray"),
                         ),
-                        rx.link(
-                            art["title"],
-                            href=f"https://pubmed.ncbi.nlm.nih.gov/{art['pmid']}/",
-                            size="2", weight="bold",
-                            is_external=True,
-                        ),
+                        rx.link(art["title"], href=f"https://pubmed.ncbi.nlm.nih.gov/{art['pmid']}/",
+                                size="2", weight="bold", is_external=True),
                         rx.text(art["authors"], size="1", color="gray"),
                         rx.text(art["abstract_short"], size="1"),
                         spacing="1",
@@ -343,21 +347,35 @@ def results_display():
                     padding="3"
                 )
             ),
-            rx.button(
-                "Generate Summary",
-                on_click=TrackerState.handle_summarize,
-                loading=TrackerState.is_summarizing,
-                color_scheme="green",
-                width="100%"
+            rx.cond(
+                TrackerState.total_pages > 1,
+                rx.hstack(
+                    rx.button("‹", on_click=lambda: TrackerState.go_to_page(TrackerState.current_page - 1),
+                              disabled=TrackerState.current_page == 1, size="1"),
+                    rx.foreach(
+                        TrackerState.page_numbers,
+                        lambda page: rx.cond(
+                            page == "...",
+                            rx.text("...", size="1", color="gray"),
+                            rx.button(
+                                page,
+                                on_click=TrackerState.go_to_page(page),
+                                variant=rx.cond(TrackerState.current_page == page, "solid", "outline"),
+                                size="1",
+                            ),
+                        ),
+                    ),
+                    rx.button("›", on_click=lambda: TrackerState.go_to_page(TrackerState.current_page + 1),
+                              disabled=TrackerState.current_page == TrackerState.total_pages, size="1"),
+                    spacing="2", justify="center", width="100%",
+                ),
             ),
-            width="100%",
-            spacing="3"
+            rx.button("Generate Summary", on_click=TrackerState.handle_summarize,
+                      loading=TrackerState.is_summarizing, color_scheme="green", width="100%"),
+            width="100%", spacing="3"
         ),
-        rx.center(
-            rx.text("No literature found. Please enter keywords and click search.", color="gray"),
-            width="100%",
-            padding="4em"
-        )
+        rx.center(rx.text("No literature found. Please enter keywords and click search.", color="gray"),
+                  width="100%", padding="4em")
     )
 
 
@@ -368,32 +386,43 @@ def stats_display():
             rx.vstack(
                 rx.heading("Reference Statistics", size="4"),
                 rx.text(f"Total articles: {TrackerState.stats_total}"),
+                # 年份文章数
                 rx.cond(
-                    TrackerState.stats_year,
+                    TrackerState.stats_year.length() > 0,
                     rx.vstack(
-                        rx.text("📅 Year", weight="bold"),
+                        rx.text("📅 Articles per Year", weight="bold"),
                         rx.foreach(
                             TrackerState.stats_year,
-                            lambda item: rx.text(f"{item[0]} Year: {item[1]} articles")
+                            lambda item: rx.text(f"{item[0]} : {item[1]} articles")
                         ),
                         spacing="1",
                     ),
                 ),
+                # 期刊分布 (Top 10)
                 rx.cond(
-                    TrackerState.stats_journal,
+                    TrackerState.stats_journal.length() > 0,
                     rx.vstack(
-                        rx.text("📖 Journal", weight="bold"),
+                        rx.text("📊 Journal Distribution (Top 10)", weight="bold"),
                         rx.foreach(
-                            TrackerState.stats_journal,
-                            lambda item: rx.text(f"{item[0]}: {item[1]} articles")
+                            TrackerState.stats_journal[:10],
+                            lambda item: rx.text(f"{item[0]} : {item[1]} articles")
                         ),
+                        spacing="1",
+                    ),
+                ),
+                # CNS 占比
+                rx.cond(
+                    TrackerState.stats_total > 0,
+                    rx.vstack(
+                        rx.text("🧬 CNS (Cell / Nature / Science) Share", weight="bold"),
+                        rx.text(f"CNS articles: {TrackerState.cns_count}"),
+                        rx.text(f"CNS ratio: {TrackerState.cns_percentage}%"),
                         spacing="1",
                     ),
                 ),
                 spacing="3",
             ),
-            width="100%",
-            padding="4"
+            width="100%", padding="4"
         ),
     )
 
@@ -407,8 +436,7 @@ def summary_display():
                 rx.markdown(TrackerState.summary),
                 width="100%"
             ),
-            width="100%",
-            padding="4"
+            width="100%", padding="4"
         )
     )
 
@@ -416,7 +444,7 @@ def summary_display():
 @rx.page('/tracker')
 @web_structure
 def tracker() -> rx.Component:
-    return rx.container(
+    return rx.box(
         rx.vstack(
             search_card(),
             results_display(),
@@ -426,9 +454,5 @@ def tracker() -> rx.Component:
             align_items="stretch",
             min_height="85vh",
         ),
-        size="4",
-        padding_top="5em",
-        padding_bottom="2em",
-        max_width="1000px",
-        width="100%",
+        width="80%",
     )

@@ -89,12 +89,6 @@ def signup_default() -> rx.Component:
 def signup() -> rx.Component:
     '''Signup page'''
 
-    return rx.container(
-                rx.center(
-                    signup_default(),
-
-                    size="4",
-                    max_width="28em",
-                    min_height="85vh",   
-                )
+    return rx.center(
+                signup_default(),
             )

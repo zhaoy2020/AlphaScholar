@@ -25,6 +25,7 @@ def menu() -> rx.Component:
                 rx.hstack(
                     navbar_link("Home", "/#"),
                     navbar_link("Tracker", "/tracker"),
+                    navbar_link("Reader", "/reader"),
                     navbar_link("About", "/about"),
                     spacing="5",
                 ),
@@ -53,9 +54,12 @@ def navbar() -> rx.Component:
         rx.mobile_and_tablet(menu()),
 
         bg='#4b2e83',
-        padding="1em",
-        position="fixed",
-        top="0px",
-        z_index="1000",
-        width="100%",
+        # padding="1em",
+        # position="fixed",
+        # top="0px",
+        # z_index="1000",
+        # width="100%",
+        # height="80px",
+        align="center",
+        justify="center",
     )
