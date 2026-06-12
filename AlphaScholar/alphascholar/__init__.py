@@ -7,6 +7,7 @@ from .pages import (
     about, 
     tracker, 
     reader,
+    assistant,
 )
 
 

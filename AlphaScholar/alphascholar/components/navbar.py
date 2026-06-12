@@ -26,6 +26,7 @@ def menu() -> rx.Component:
                     navbar_link("Home", "/#"),
                     navbar_link("Tracker", "/tracker"),
                     navbar_link("Reader", "/reader"),
+                    navbar_link("Assistant", "/assistant"),
                     navbar_link("About", "/about"),
                     spacing="5",
                 ),
