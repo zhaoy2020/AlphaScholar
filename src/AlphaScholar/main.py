@@ -1,23 +1,17 @@
-import os
-import openai
-from agent import run_agent_stream
-from config import Config
-
 from loguru import logger
 
+from agent import run_agent_stream
+from config import Config
 
 
 def main(config: Config):
     '''主程序入口'''
 
     # ---------- 配置 ----------
-    client = openai.OpenAI(
-        api_key=config.OPENAI_API_KEY,
-        base_url=config.OPENAI_BASE_URL
-    )
-    MODEL = config.MODEL
-
     logger.info("文献调研 Agent (流式输出)")
+
+    client = config.create_client()
+    MODEL = config.model
 
     while True:
         try:
@@ -48,4 +42,4 @@ def main(config: Config):
 if __name__ == "__main__":
     '''运行主程序'''
 
-    main(config=Config())
+    main(config=Config(platform="cau", model="qwen3.6"))

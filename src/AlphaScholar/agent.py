@@ -71,10 +71,11 @@ def _research_loop(messages: list, client: openai.OpenAI, model: str, max_retrie
                         "content": result
                     })
                     # 调试输出
-                    # print(f"[工具返回]: {result[:200]}...", flush=True)
-                    yield f"✅ 工具 {func_name} 返回结果（前200字符）: {result[:200]}...\n"
+                    yield f"✅ {result[:200]}...\n"
+
                 messages.append(msg)
                 continue
+            
             # 无工具调用，准备生成报告
             break
 
@@ -147,7 +148,7 @@ def run_agent_stream(user_input: str, client: openai.OpenAI, model: str, max_ret
         user_next = input("\n\n继续提问（或 'end' 结束）: ").strip()
         if user_next.lower() == 'end':
             yield "再见！\n"
-            return messages
+            return final_report, messages
         
         elif user_next.lower().strip() == '':
             continue

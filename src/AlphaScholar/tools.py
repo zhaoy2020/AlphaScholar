@@ -3,6 +3,7 @@ import requests
 from pymed import PubMed
 import arxiv
 import os 
+from pathlib import Path 
 
 
 PUBMED_EMAIL = os.getenv("EMAIL", 'example@gmail.com') # 请改成真实邮箱
@@ -80,6 +81,73 @@ def search_semantic_scholar(query: str, max_results: int = 5) -> str:
     
     except Exception as e:
         return f"Semantic Scholar 检索出错: {str(e)}"
+    
+
+def scan_local_files(directory: str) -> str:
+    """扫描本地目录下的文件，返回文件列表和基本信息"""
+
+    try:
+        directory: Path = Path(directory)
+        files_info = []
+        for file in directory.glob("*.*"):
+            if file.is_file():
+                files_info.append({
+                    "filename": file.name,
+                    'format': file.suffix,
+                    "size_kb": round(file.stat().st_size / 1024, 2),
+                    "path": str(file.resolve())
+                })
+        return json.dumps(files_info, ensure_ascii=False, indent=2)
+
+    except Exception as e:
+        return f"扫描目录出错: {str(e)}"
+    
+
+def read_pdf(file_path: str) -> str:
+    """读取 PDF 文件内容（示例实现，实际可用 PyPDF2、pdfplumber 等库）"""
+
+    try:
+        # 这里简单返回文件路径，实际应提取文本内容
+        return f"PDF 文件路径: {file_path}"
+    
+    except Exception as e:
+        return f"读取 PDF 出错: {str(e)}"
+    
+def read_docx(file_path: str) -> str:
+    pass
+    
+def read_txt(file_path: str) -> str:
+    """读取 TXT 文件内容"""
+    pass 
+
+def read_csv(file_path: str) -> str:
+    """读取 CSV 文件内容（示例实现，实际可用 pandas 等库）"""
+    pass
+
+
+def read_file(file_path: str, format: str) -> str:
+    '''读取本地文件内容'''
+
+    try:
+        read_functions = {
+            ".pdf": read_pdf,
+            ".docx": read_docx,
+            ".txt": read_txt,
+            ".csv": read_csv
+        }
+        articles: list = []
+        if format in read_functions:
+            content = read_functions[format](file_path)
+        articles.append({
+            "title": content['title'] if content is not None else "未知",
+            'authors': content['authors'] if content is not None else "未知",
+            'date': content['date'] if content is not None else "未知",
+            'abstract': content['abstract'] if content is not None else "未知"
+        })
+        return json.dumps(articles, ensure_ascii=False, indent=2)
+
+    except Exception as e:
+        return f"读取文件出错: {str(e)}"
 
 
 # 工具描述（OpenAI Function Calling 格式）
@@ -137,4 +205,6 @@ TOOL_FUNCTIONS = {
     "search_pubmed": search_pubmed,
     "search_arxiv": search_arxiv,
     "search_semantic_scholar": search_semantic_scholar,
+    "scan_local_files": scan_local_files,
+    "read_file": read_file,
 }
