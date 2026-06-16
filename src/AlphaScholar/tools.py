@@ -1,3 +1,48 @@
+'''
+Function calling (Tool calling):
+- 目标：打破纯文本交互的限制，让模型能够触发外部操作（查数据库、调 API、执行计算等）。
+
+- 工作方式：
+  - 你预先定义一系列函数（工具），包括函数名、功能描述、参数类型。
+  - 用户提问后，模型分析上下文，如果觉得需要调用某个函数，就返回一个结构化的调用请求（JSON）。
+  - 你的程序真正执行这个函数，得到结果。
+  - 将结果重新喂给模型，模型再基于结果生成最终回答。
+
+- 字段说明：
+  - type: "function"（表示这是一个函数调用工具）
+  - function.name	函数名，唯一标识
+  - function.description	用自然语言描述函数的作用（至关重要，模型靠这个决定何时调用）
+  - function.parameters	JSON Schema，定义函数的输入参数
+
+例如：
+{
+    "type": "function",
+    "function": {
+        "name": "get_weather",
+        "description": "获取指定城市的天气",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "city": {
+                    "type": "string",
+                    "description": "城市名称"
+                }
+            },
+            "required": ["city"]
+        }
+    }
+}
+
+Function calling 和 MCP（Model-Callable Programs）的关系：
+- 没有 MCP 时：你直接在 tools.py 里写死工具定义和 Python 函数，通过 Function Calling 让模型调用它们。
+- 引入 MCP 时：
+  - 你把 search_pubmed、search_arxiv 等函数封装成一个 MCP Server（之前我用 FastMCP 演示过）。
+  - 你的 Agent 在启动时，通过 MCP 客户端连接到这个 Server，调用 list_tools() 动态获取工具列表。
+  - 将获取到的工具定义转换成 OpenAI 的 tools 格式，传给模型进行 Function Calling。
+  - 当模型返回 tool_calls 时，你的 Agent 再通过 MCP 客户端的 call_tool 去执行真正的函数，并将结果以 tool 消息返回给模型。
+'''
+
+
 import json
 import requests
 from pymed import PubMed
@@ -136,32 +181,43 @@ def read_file(file_path: str, format: str) -> str:
             ".csv": read_csv
         }
         articles: list = []
-        if format in read_functions:
+        if format not in read_functions:
+            return f"不支持的文件格式: {format}"
+        else:
             content = read_functions[format](file_path)
-        articles.append({
-            "title": content['title'] if content is not None else "未知",
-            'authors': content['authors'] if content is not None else "未知",
-            'date': content['date'] if content is not None else "未知",
-            'abstract': content['abstract'] if content is not None else "未知"
-        })
-        return json.dumps(articles, ensure_ascii=False, indent=2)
+            articles.append({
+                "title": content['title'] if content is not None else "未知",
+                'authors': content['authors'] if content is not None else "未知",
+                'date': content['date'] if content is not None else "未知",
+                'abstract': content['abstract'] if content is not None else "未知"
+            })
+            return json.dumps(articles, ensure_ascii=False, indent=2)
 
     except Exception as e:
         return f"读取文件出错: {str(e)}"
 
 
-# 工具描述（OpenAI Function Calling 格式）
+# --- 工具描述（OpenAI Function Calling 格式）---
 TOOLS = [
     {
         "type": "function",
         "function": {
             "name": "search_pubmed",
-            "description": "在 PubMed 中检索生物医学、药学、护理等生命科学文献。适合医学相关研究。",
+            "description": (
+                "概述：在 PubMed 中检索生物医学文献。"
+                "使用：支持 PubMed 高级检索语法，包括字段标签（如 [tiab] 标题/摘要、[ta] 期刊名、[au] 作者）、布尔运算符（AND、OR、NOT）和括号。请使用完整的 PubMed 查询表达式，"
+                '例如："bacillus"[tiab] AND "ai"[tiab] AND "Nature"[ta]'
+                '例如："(bacillus"[tiab] OR "lactobacillus"[tiab]) AND ("ai"[tiab] OR "machine learning"[tiab] OR "deep learning"[tiab]) AND "Nature"[ta]'
+                "强调：必须使用高级检索语法，否则结果不准确。"
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string", "description": "检索词，如 'cancer immunotherapy'"},
-                    "max_results": {"type": "integer", "description": "返回数量，默认5"}
+                    "query": {
+                        "type": "string",
+                        "description": 'PubMed 查询表达式，可使用字段标签和布尔运算符,例如："bacillus"[tiab] AND "ai"[tiab] AND "Nature"[ta],例如："(bacillus"[tiab] OR "lactobacillus"[tiab]) AND ("ai"[tiab] OR "machine learning"[tiab] OR "deep learning"[tiab]) AND "Nature"[ta]'
+                    },
+                    "max_results": {"type": "integer", "default": 5}
                 },
                 "required": ["query"]
             }
@@ -171,12 +227,18 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "search_arxiv",
-            "description": "在 arXiv 中检索计算机科学、物理、数学等领域的预印本。",
+            "description": (
+                "在 arXiv 中检索预印本。使用简单关键词搜索，支持 AND、OR、NOT 和引号精确匹配。"
+                "例如：'variational autoencoder' AND microbiome"
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string", "description": "检索词"},
-                    "max_results": {"type": "integer"}
+                    "query": {
+                        "type": "string",
+                        "description": "arXiv 搜索字符串，可包含 AND、OR 和引号"
+                    },
+                    "max_results": {"type": "integer", "default": 5}
                 },
                 "required": ["query"]
             }
@@ -186,12 +248,18 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "search_semantic_scholar",
-            "description": "在 Semantic Scholar 中检索全学科论文，适合作为 Google Scholar 的替代。",
+            "description": (
+                "在 Semantic Scholar 中检索全学科论文。使用简单关键词搜索，支持 AND、+ 前缀（必须包含）、- 前缀（排除）。"
+                "例如：'variational autoencoder' +microbiome"
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string", "description": "检索词"},
-                    "max_results": {"type": "integer"}
+                    "query": {
+                        "type": "string",
+                        "description": "Semantic Scholar 查询字符串，可包含 AND、+、- 运算符"
+                    },
+                    "max_results": {"type": "integer", "default": 5}
                 },
                 "required": ["query"]
             }

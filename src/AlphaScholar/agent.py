@@ -1,8 +1,11 @@
 import json
 import re
 import openai
-from tools import TOOLS, TOOL_FUNCTIONS
+
 from prompts import SYSTEM_PROMPT, EVALUATION_PROMPT
+from tools import TOOLS, TOOL_FUNCTIONS
+from memory import Memory 
+from utils import show
 
 
 def evaluate_report(client: openai.OpenAI, model: str, report: str) -> dict:
@@ -35,7 +38,7 @@ def evaluate_report(client: openai.OpenAI, model: str, report: str) -> dict:
         return {"score": 0, "issues": [f"评审异常: {str(e)}"], "suggestion": "请重新生成更规范的报告"}
 
 
-def _research_loop(messages: list, client: openai.OpenAI, model: str, max_retries: int = 3, quality_threshold: int = 7):
+def _research_loop(memory: Memory, client: openai.OpenAI, model: str, max_retries: int = 3, quality_threshold: int = 7):
     """内部调研循环生成器：
     - 进行工具调用、报告生成、自动评估、可能的重试
     - 返回 (final_report, updated_messages)
@@ -51,7 +54,7 @@ def _research_loop(messages: list, client: openai.OpenAI, model: str, max_retrie
         while True:
             response = client.chat.completions.create(
                 model=model,
-                messages=messages,
+                messages=memory.get_messages(),
                 tools=TOOLS,
                 tool_choice="auto",
                 stream=False,
@@ -62,28 +65,23 @@ def _research_loop(messages: list, client: openai.OpenAI, model: str, max_retrie
                 for tool_call in msg.tool_calls:
                     func_name = tool_call.function.name
                     args = json.loads(tool_call.function.arguments)
-                    yield f"\n🔍 调用工具: {func_name}({args})\n"
+                    show(f"\n🔍 调用工具: {func_name}({args})\n")
 
                     result = TOOL_FUNCTIONS[func_name](**args)
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": tool_call.id,
-                        "content": result
-                    })
+                    memory.add_message(role='tool', content=result, tool_call_id=tool_call.id)
                     # 调试输出
-                    yield f"✅ {result[:200]}...\n"
+                    show(f"✅ {result[:200]}...\n")
 
-                messages.append(msg)
-                continue
-            
+                memory.add_message(role="assistant", content="", tool_calls=msg.tool_calls)
+                continue  # 可能有多轮工具调用，直到没有工具调用了才跳出循环            
             # 无工具调用，准备生成报告
             break
 
         # --- 流式生成报告 ---
-        yield "\n📝 正在生成报告...\n"
+        show("\n📝 正在生成报告...\n")
         stream = client.chat.completions.create(
             model=model,
-            messages=messages,
+            messages=memory.get_messages(),
             stream=True
         )
         full_response = ""
@@ -93,39 +91,36 @@ def _research_loop(messages: list, client: openai.OpenAI, model: str, max_retrie
                 if delta and delta.content:
                     token = delta.content
                     full_response += token
-                    # print(token, end="", flush=True)   # 实时输出
-                    yield token
-        messages.append({"role": "assistant", "content": full_response})
+                    show(token)  # 实时输出生成内容
+        memory.add_message(role='assistant', content=full_response)
 
         # --- 自动评审 ---
-        yield "\n\n🔎 正在评估报告质量...\n"
+        show("\n\n🔎 正在评估报告质量...\n")
         evaluation = evaluate_report(client, model, full_response)
         score = evaluation["score"]
         issues = evaluation["issues"]
         suggestion = evaluation["suggestion"]
-        yield f"📊 当前评分: {score}/10\n"
+        show(f"📊 当前评分: {score}/10\n")
         if issues:
-            yield f"⚠️ 发现问题: {'; '.join(issues)}\n"
-        yield f"💡 建议: {suggestion}\n"
+            show(f"⚠️ 发现问题: {'; '.join(issues)}\n")
+        show(f"💡 建议: {suggestion}\n")
 
         # --- 判断是否达标 ---
         if score >= quality_threshold:
             final_report = full_response
-            yield "\n✅ 报告质量达标，输出最终结果。\n"
-            return final_report, messages
+            show("\n✅ 报告质量达标，输出最终结果。\n")
+            return None  # 结束调研循环，返回最终报告
         
         else:
             retries += 1
             if retries > max_retries:
-                yield f"\n⚠️ 已达最大重试次数（{max_retries}），将使用当前版本。\n"
+                show(f"\n⚠️ 已达最大重试次数（{max_retries}），将使用当前版本。\n")
                 final_report = full_response
-                return final_report, messages
             
             # 追加改进指令
-            feedback: str = (f"报告质量评分只有{score}/10，存在以下问题：{'；'.join(issues)}。"
-                        f"建议：{suggestion}。请根据这些意见改进报告，若需补充文献请重新检索。")
-            messages.append({"role": "user", "content": feedback})
-            yield f"\n🔄 正在进行第 {retries} 次改进...\n"
+            feedback: str = f"报告质量评分只有{score}/10，存在以下问题：{'；'.join(issues)}。\n 建议：{suggestion}。请根据这些意见改进报告，若需补充文献请重新检索。"
+            memory.add_message(role='user', content=feedback)
+            show(f"\n🔄 正在进行第 {retries} 次改进...\n")
 
 
 def run_agent_stream(user_input: str, client: openai.OpenAI, model: str, max_retries: int = 3, quality_threshold: int = 7):
@@ -135,25 +130,24 @@ def run_agent_stream(user_input: str, client: openai.OpenAI, model: str, max_ret
     - 报告完成后，支持用户继续提问（多轮对话）
     - 每次 yield 状态信息
     """
-    messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": user_input},
-    ]
+
+    # 每个主题创建一个新的 Memory 实例
+    memory = Memory()
+    memory.add_message(role='system', content=SYSTEM_PROMPT)
+    memory.add_message(role='user', content=user_input)
 
     # 第一次调研
-    final_report, messages = yield from _research_loop(messages, client, model, max_retries, quality_threshold)
+    _research_loop(memory, client, model, max_retries, quality_threshold)
 
     # --- 多轮对话：用户可继续提问 ---
     while True:
         user_next = input("\n\n继续提问（或 'end' 结束）: ").strip()
         if user_next.lower() == 'end':
-            yield "再见！\n"
-            return final_report, messages
-        
+            show("再见！\n")        
         elif user_next.lower().strip() == '':
             continue
-
-        messages.append({"role": "user", "content": user_next})
-        yield "\n继续调研...\n"
-        # 再次调用调研循环（每次都是独立的检索+报告+评估）
-        final_report, messages = yield from _research_loop(messages, client, model, max_retries, quality_threshold)
+        else:
+            memory.add_message(role='user', content=user_next)
+            show("\n继续调研...\n")
+            # 再次调用调研循环（每次都是独立的检索+报告+评估）
+            _research_loop(memory, client, model, max_retries, quality_threshold)
