@@ -10,6 +10,7 @@ PUBMED_EMAIL = os.getenv("EMAIL", 'example@gmail.com') # 请改成真实邮箱
 
 def search_pubmed(query: str, max_results: int = 5) -> str:
     """在 PubMed 中检索生物医学文献"""
+
     try:
         pubmed = PubMed(tool="LiteratureAgent", email=PUBMED_EMAIL)
         results = pubmed.query(query, max_results=max_results)
@@ -26,12 +27,14 @@ def search_pubmed(query: str, max_results: int = 5) -> str:
                 "abstract": abstract,
             })
         return json.dumps(articles, ensure_ascii=False, indent=2)
+    
     except Exception as e:
         return f"PubMed 检索出错: {str(e)}"
 
 
 def search_arxiv(query: str, max_results: int = 5) -> str:
     """在 arXiv 中检索预印本"""
+
     try:
         client = arxiv.Client()
         search = arxiv.Search(query=query, max_results=max_results,
@@ -46,12 +49,14 @@ def search_arxiv(query: str, max_results: int = 5) -> str:
                 "abstract": (r.summary[:300].replace('\n', ' ')) + "...",
             })
         return json.dumps(articles, ensure_ascii=False, indent=2)
+    
     except Exception as e:
         return f"arXiv 检索出错: {str(e)}"
 
 
 def search_semantic_scholar(query: str, max_results: int = 5) -> str:
     """在 Semantic Scholar 中检索全学科论文"""
+
     try:
         url = "https://api.semanticscholar.org/graph/v1/paper/search"
         params = {
@@ -72,6 +77,7 @@ def search_semantic_scholar(query: str, max_results: int = 5) -> str:
                 "abstract": abstract[:300] + ("..." if len(abstract) > 300 else ""),
             })
         return json.dumps(articles, ensure_ascii=False, indent=2)
+    
     except Exception as e:
         return f"Semantic Scholar 检索出错: {str(e)}"
 

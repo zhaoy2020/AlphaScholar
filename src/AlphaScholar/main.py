@@ -3,6 +3,7 @@ import openai
 from agent import run_agent_stream
 from config import Config
 
+from loguru import logger
 
 
 
@@ -16,34 +17,35 @@ def main(config: Config):
     )
     MODEL = config.MODEL
 
-    print("=" * 50)
-    print("文献调研 Agent (流式输出)")
-    print("输入 'exit' 退出程序")
-    print("=" * 50)
-
-    history_messages: list = []  # 用于记录对话历史，支持多轮交互
+    logger.info("文献调研 Agent (流式输出)")
 
     while True:
         try:
-            user_input = input("\n请输入研究方向（或 'exit' 结束）: ").strip()
+            user_input = input("\n请输入研究方向（或 'exit' 结束）: ").strip() or 'vae在为生物组学中的应用进展。'
+            print(f"🔍 检索关键词: {user_input}")
+
             if user_input.lower() == 'exit':
-                print("再见！")
+                logger.info("再见！")
                 break
+
             if not user_input:
                 continue
 
-            print("\n开始调研...")
-            messages = run_agent_stream(user_input, client, MODEL)
-            history_messages.extend(messages)  # 将本轮对话加入历史记录，支持多轮交互
+            print("\n✅ 开始调研...")
+            gen = run_agent_stream(user_input, client, MODEL)
+            for chunk in gen:
+                print(chunk, end="", flush=True)
             print("\n\n✅ 调研完成。")
 
         except KeyboardInterrupt:
-            print("\n\n⚠️ 用户中断。")
+            logger.warning("\n\n⚠️ 用户中断。")
             break
 
         except Exception as e:
-            print(f"\n❌ 发生错误: {e}")
+            logger.error(f"\n❌ 发生错误: {e}")
 
 
 if __name__ == "__main__":
+    '''运行主程序'''
+
     main(config=Config())
