@@ -1,153 +1,244 @@
+# --- Multi-agent ---
 import json
-import re
-import openai
+import re 
 
-from prompts import SYSTEM_PROMPT, EVALUATION_PROMPT
+from llms import Config
+from prompts import SYSTEM_PROMPT, RETRIEVER_PROMPT, ANALYST_PROMPT, WRITER_PROMPT, EVALUATION_PROMPT
 from tools import TOOLS, TOOL_FUNCTIONS
 from memory import Memory 
 from utils import show
 
 
-def evaluate_report(client: openai.OpenAI, model: str, report: str) -> dict:
-    """调用模型评审报告，返回包含 score, issues, suggestion 的字典"""
+class Agent:
+    '''Agent = Perception + LLM + Tools + Memory.
+    Perception: user input text
+    LLM: openai.OpenAI
+    Tools: openai function calling
+    Memory: short-term memory (conversation history) + long-term memory (file storage)
+    '''
 
-    try:
-        resp = client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": EVALUATION_PROMPT},
-                {"role": "user", "content": report}
-            ],
-            temperature=0.1,    # 评审需要稳定
-        )
-        content = resp.choices[0].message.content
-        # 尝试提取 JSON（可能包裹在 ```json 中）
-        json_match = re.search(r'\{[\s\S]*\}', content)
-        if json_match:
-            result = json.loads(json_match.group())
+    def __init__(self, platform: str, system_prompt: str, memory_file: str):
+        self.client, self.model = Config(platform=platform).create_client_and_model()
+        self.tools, self.tool_functions = TOOLS, TOOL_FUNCTIONS
+        self.memory = Memory(storage_path=memory_file)
+        self.memory.add_message(role='system', content=system_prompt)
+
+    def run_llm(self, use_tool: bool = False, stream: bool = True, temprature: float = 0.2):
+        '''调用 LLM 生成响应，支持工具调用和流式输出'''
+
+        if use_tool:
+            # 工具调用可能涉及多轮交互，直到没有工具调用了才跳出循环
+            while True:
+                response = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=self.memory.get_messages(),
+                    tools=self.tools,
+                    tool_choice="auto",
+                    stream=False,
+                    temperature=temprature
+                )
+                msg = response.choices[0].message
+                if msg.tool_calls:
+                    if msg.content:
+                        show(f"\n\n💭 模型思考: {msg.content}\n\n")
+                    for tool_call in msg.tool_calls:
+                        func_name = tool_call.function.name
+                        args = json.loads(tool_call.function.arguments)
+                        show(f"\n🔍 调用工具: {func_name}({args})\n")
+                        result = self.tool_functions[func_name](**args)
+                        show(f'\n✅ 调用结果：{result[:100]}\n\n')
+                        self.memory.add_message(role='tool', content=result, tool_call_id=tool_call.id)
+                    self.memory.add_message(role="assistant", content="", tool_calls=msg.tool_calls)
+                    continue  # 可能有多轮工具调用，直到没有工具调用了才跳出循环 
+                else:
+                    # 无工具调用，跳出循环
+                    # 模型给出了最终回复（content 通常非空）
+                    full_response = msg.content or ""
+                    self.memory.add_message(role="assistant", content=full_response)
+                    return full_response
         else:
-            result = json.loads(content)
-        result.setdefault("score", 0)
-        result.setdefault("issues", [])
-        result.setdefault("suggestion", "")
-
-        return result
-    
-    except Exception as e:
-        # 评审失败时默认低分，触发重试
-        return {"score": 0, "issues": [f"评审异常: {str(e)}"], "suggestion": "请重新生成更规范的报告"}
-
-
-def _research_loop(memory: Memory, client: openai.OpenAI, model: str, max_retries: int = 3, quality_threshold: int = 7):
-    """内部调研循环生成器：
-    - 进行工具调用、报告生成、自动评估、可能的重试
-    - 返回 (final_report, updated_messages)
-    - 每次 yield 状态信息供外部打印
-    """
-
-    retries: int = 0
-    final_report: str = ""
-    
-    # --- 调研主循环 ---
-    while True:
-        # --- 工具调用循环 ---
-        while True:
-            response = client.chat.completions.create(
-                model=model,
-                messages=memory.get_messages(),
-                tools=TOOLS,
-                tool_choice="auto",
-                stream=False,
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=self.memory.get_messages(),
+                stream=stream,
+                temperature=temprature,
             )
-            msg = response.choices[0].message
+            if stream:
+                # 流式输出
+                full_response = ""
+                for chunk in response:
+                    if chunk.choices and len(chunk.choices) > 0:
+                        delta = chunk.choices[0].delta
+                        if delta and delta.content:
+                            token = delta.content
+                            full_response += token
+                            show(token)  # 实时输出生成内容
+                self.memory.add_message(role='assistant', content=full_response)
+                return full_response
+            else:
+                # 非流式输出
+                full_response = response.choices[0].message.content
+                self.memory.add_message(role='assistant', content=full_response)
+                return full_response
+    
 
-            if msg.tool_calls:
-                for tool_call in msg.tool_calls:
-                    func_name = tool_call.function.name
-                    args = json.loads(tool_call.function.arguments)
-                    show(f"\n🔍 调用工具: {func_name}({args})\n")
+class AlphaScholarTwoAgent:
+    '''包含一个 Scholar Agent 负责检索和写作，一个 Reviewer Agent 负责评审和反馈。两者循环迭代，直到报告质量达标或达到最大重试次数。'''
 
-                    result = TOOL_FUNCTIONS[func_name](**args)
-                    memory.add_message(role='tool', content=result, tool_call_id=tool_call.id)
-                    # 调试输出
-                    show(f"✅ {result[:200]}...\n")
+    def __init__(self):
+        self.scholar = Agent(platform='cau', system_prompt=SYSTEM_PROMPT, memory_file='agent_memory.json')
+        self.reviewer = Agent(platform='cau', system_prompt=EVALUATION_PROMPT, memory_file='reviewer_memory.json')
 
-                memory.add_message(role="assistant", content="", tool_calls=msg.tool_calls)
-                continue  # 可能有多轮工具调用，直到没有工具调用了才跳出循环            
-            # 无工具调用，准备生成报告
-            break
+    def workflow(self, user_input: str, retries: int = 3, quality_threshold: int = 7):
+        '''两个Agent 完成整个调研流程（包含工具调用和自动评审）'''
 
-        # --- 流式生成报告 ---
-        show("\n📝 正在生成报告...\n")
-        stream = client.chat.completions.create(
-            model=model,
-            messages=memory.get_messages(),
-            stream=True
-        )
-        full_response = ""
-        for chunk in stream:
-            if chunk.choices and len(chunk.choices) > 0:
-                delta = chunk.choices[0].delta
-                if delta and delta.content:
-                    token = delta.content
-                    full_response += token
-                    show(token)  # 实时输出生成内容
-        memory.add_message(role='assistant', content=full_response)
+        self.scholar.memory.add_message(role='user', content=user_input)
+        for counter in range(retries):
+            show(f'\n\n🔍 第 {counter + 1} 次调研中...\n\n')            
+            writer_output = self.scholar.run_llm(use_tool=True, stream=True)
 
-        # --- 自动评审 ---
-        show("\n\n🔎 正在评估报告质量...\n")
-        evaluation = evaluate_report(client, model, full_response)
-        score = evaluation["score"]
-        issues = evaluation["issues"]
-        suggestion = evaluation["suggestion"]
-        show(f"📊 当前评分: {score}/10\n")
-        if issues:
-            show(f"⚠️ 发现问题: {'; '.join(issues)}\n")
-        show(f"💡 建议: {suggestion}\n")
+            show('\n\n🔎 评审中...\n\n"')
+            self.reviewer.memory.add_message(role='user', content=writer_output)
+            evaluation = self.reviewer.run_llm(use_tool=False, stream=False)
 
-        # --- 判断是否达标 ---
-        if score >= quality_threshold:
-            final_report = full_response
-            show("\n✅ 报告质量达标，输出最终结果。\n")
-            return None  # 结束调研循环，返回最终报告
-        
-        else:
-            retries += 1
-            if retries > max_retries:
-                show(f"\n⚠️ 已达最大重试次数（{max_retries}），将使用当前版本。\n")
-                final_report = full_response
+            # 解析评审结果，提取 score, issues, suggestion
+            json_match = re.search(r'\{[\s\S]*\}', evaluation)
+            if json_match:
+                result = json.loads(json_match.group())
+            else:
+                result = json.loads(evaluation)
+            result.setdefault("score", 0)
+            result.setdefault("issues", [])
+            result.setdefault("suggestion", "")
             
-            # 追加改进指令
-            feedback: str = f"报告质量评分只有{score}/10，存在以下问题：{'；'.join(issues)}。\n 建议：{suggestion}。请根据这些意见改进报告，若需补充文献请重新检索。"
-            memory.add_message(role='user', content=feedback)
-            show(f"\n🔄 正在进行第 {retries} 次改进...\n")
+            score = result["score"]
+            issues = result["issues"]
+            suggestion = result["suggestion"]
+            show(f"\n\n📊 当前评分: {score}/10\n\n")
+            if issues:
+                show(f"\n\n⚠️ 发现问题: {'; '.join(issues)}\n\n")
+            show(f"\n\n💡 建议: {suggestion}\n\n")
 
+            # --- 判断是否达标 ---
+            if score >= quality_threshold:
+                show("\n\n✅ 报告质量达标，输出最终结果。\n\n")
+                return writer_output  # 结束调研循环，返回最终报告
+            else:
+                feedback: str = f"报告质量评分只有{score}/10，存在以下问题：{'；'.join(issues)}。\n 建议：{suggestion}。请根据这些意见改进报告，若需补充文献请重新检索。"
+                self.scholar.memory.add_message(role='user', content=feedback)
+                show(f"\n\n🔄 正在进行第 {counter + 1} 次改进...\n\n")
 
-def run_agent_stream(user_input: str, client: openai.OpenAI, model: str, max_retries: int = 3, quality_threshold: int = 7):
-    """
-    主生成器函数：
-    - 完成一次完整的文献调研（含自动改进）
-    - 报告完成后，支持用户继续提问（多轮对话）
-    - 每次 yield 状态信息
-    """
+        show(f"\n\n⚠️ 已达最大重试次数（{retries}），将使用当前版本。\n\n")
+        return writer_output
+    
+    def run(self):
+        show("\n\n👋 欢迎使用 AlphaScholar 多Agent 版本！\n\n")
+        final_report: str = ""
+        while True:
+            try:
+                user_input = input("\n请输入研究方向（或 'exit' 结束）: ").strip() or 'vae 在为 微生物组学 中的应用进展。'
+                show(f"\n\n👋 研究主题为：{user_input}\n\n")
+                if user_input.lower() == 'exit':
+                    show("\n\n👋 感谢使用 AlphaScholar，期待下次再见！\n\n")
+                    break
+                elif user_input.lower() == '':
+                    show("\n\n⚠️ 输入不能为空，请重新输入。\n\n")
+                else:
+                    final_report = self.workflow(user_input=user_input)
+            except Exception as e:
+                show(f"\n\n❌ 发生错误: {e}\n\n")
 
-    # 每个主题创建一个新的 Memory 实例
-    memory = Memory()
-    memory.add_message(role='system', content=SYSTEM_PROMPT)
-    memory.add_message(role='user', content=user_input)
+        return final_report
+    
 
-    # 第一次调研
-    _research_loop(memory, client, model, max_retries, quality_threshold)
+class AlphaScholarMultiAgent:
+    '''包含多个专职 Agent：检索员、分析师、撰写员、审稿人。每个 Agent 专注一个环节，循环迭代改进。'''
 
-    # --- 多轮对话：用户可继续提问 ---
-    while True:
-        user_next = input("\n\n继续提问（或 'end' 结束）: ").strip()
-        if user_next.lower() == 'end':
-            show("再见！\n")        
-        elif user_next.lower().strip() == '':
-            continue
-        else:
-            memory.add_message(role='user', content=user_next)
-            show("\n继续调研...\n")
-            # 再次调用调研循环（每次都是独立的检索+报告+评估）
-            _research_loop(memory, client, model, max_retries, quality_threshold)
+    def __init__(self):
+        self.retriever = Agent(platform='cau', system_prompt=RETRIEVER_PROMPT, memory_file='retriever.json')
+        self.analyst = Agent(platform='cau', system_prompt=ANALYST_PROMPT, memory_file='analyst.json')
+        self.writer = Agent(platform='cau', system_prompt=WRITER_PROMPT, memory_file='writer.json')
+        self.reviewer = Agent(platform='cau', system_prompt=EVALUATION_PROMPT, memory_file='reviewer.json')
+
+    def workflow(self, user_input: str, retries: int = 3, quality_threshold: int = 7):
+        '''Planing -> Retrieval -> Analysis -> Writing -> Evaluation -> (可能的) 迭代改进'''
+
+        final_report = ""
+        self.retriever.memory.add_message(role='user', content=user_input)
+        for counter in range(retries):
+            show('\n\n🔍 检索员工作中...')
+            retrieval_result = self.retriever.run_llm(use_tool=True)
+
+            show('\n\n📊 分析师工作中...')
+            self.analyst.memory.add_message(role='user', content=retrieval_result)
+            analyst_output = self.analyst.run_llm(use_tool=False)
+
+            show(f'\n\n✍️ 第 {counter + 1} 次撰写报告..."')
+            self.writer.memory.add_message(role='user', content=analyst_output)
+            writer_output = self.writer.run_llm(use_tool=False)
+
+            show('\n\n🔎 审稿人评审中..."')
+            self.reviewer.memory.add_message(role='user', content=writer_output)
+            evaluation = self.reviewer.run_llm(use_tool=False)
+
+            # 解析评审结果，提取 score, issues, suggestion
+            json_match = re.search(r'\{[\s\S]*\}', evaluation)
+            if json_match:
+                result = json.loads(json_match.group())
+            else:
+                result = json.loads(evaluation)
+            result.setdefault("score", 0)
+            result.setdefault("issues", [])
+            result.setdefault("suggestion", "")            
+            score = result["score"]
+            issues = result["issues"]
+            suggestion = result["suggestion"]
+            show(f"\n\n📊 当前评分: {score}/10\n\n")
+            if issues:
+                show(f"\n\n⚠️ 发现问题: {'; '.join(issues)}\n\n")
+            show(f"\n\n💡 建议: {suggestion}\n\n")
+
+            # --- 判断是否达标 ---
+            if score >= quality_threshold:
+                show("\n\n✅ 报告质量达标，输出最终结果。\n\n")
+                return writer_output  # 结束调研循环，返回最终报告
+            else:
+                feedback: str = f"报告质量评分只有{score}/10，存在以下问题：{'；'.join(issues)}。\n 建议：{suggestion}。请根据这些意见改进报告，若需补充文献请重新检索。"
+                # 只告诉检索员
+                self.retriever.memory.add_message(role='user', content=feedback)
+                # 分析师和作家重置记忆，避免信息污染
+                self.analyst.memory.clear_short_term()  # 需在 Memory 中实现
+                self.analyst.memory.add_message(role='system', content=ANALYST_PROMPT)
+                self.writer.memory.clear_short_term()
+                self.writer.memory.add_message(role='system', content=WRITER_PROMPT)
+                # 下一轮循环时，retriever 会基于 feedback 重新检索，然后传给全新的 analyst 和 writer
+                show(f"\n🔄 正在进行第 {counter + 1} 次改进...\n")
+
+        show(f"\n\n⚠️ 已达最大重试次数（{retries}），将使用当前版本。\n\n")
+        return final_report
+    
+    def run(self):
+        show("\n\n👋 欢迎使用 AlphaScholar 多Agent 版本！\n\n")
+        final_report: str = ""
+        while True:
+            try:
+                user_input = input("\n请输入研究方向（或 'exit' 结束）: ").strip() or 'vae 在为 微生物组学 中的应用进展。'
+                show(f"\n\n👋 研究主题为：{user_input}\n\n")
+                if user_input.lower() == 'exit':
+                    show("\n\n👋 感谢使用 AlphaScholar，期待下次再见！\n\n")
+                    break
+                elif user_input.lower() == '':
+                    show("\n\n⚠️ 输入不能为空，请重新输入。\n\n")
+                else:
+                    final_report = self.workflow(user_input=user_input)
+            except Exception as e:
+                show(f"\n\n❌ 发生错误: {e}\n\n")
+
+        return final_report
+    
+
+if __name__ == "__main__":
+    agent = AlphaScholarTwoAgent()
+    # agent = AlphaScholarMultiAgent()
+    agent.run()
+

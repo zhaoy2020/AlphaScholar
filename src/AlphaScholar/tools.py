@@ -15,25 +15,53 @@ Function calling (Tool calling):
   - function.parameters	JSON Schema，定义函数的输入参数
 
 例如：
-{
-    "type": "function",
-    "function": {
-        "name": "get_weather",
-        "description": "获取指定城市的天气",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "city": {
-                    "type": "string",
-                    "description": "城市名称"
-                }
-            },
-            "required": ["city"]
+OpenAI的Client的tools所需工具定义格式如下：
+TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "get_weather",
+            "description": "获取指定城市的天气",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "city": {
+                        "type": "string",
+                        "description": "城市名称"
+                    }
+                },
+                "required": ["city"]
+            }
         }
-    }
+    },
+]
+
+# 模型返回的tool_calls后需要在本地调用：
+TOOL_FUNCTIONS = {
+    "get_weather": get_weather,
 }
 
-Function calling 和 MCP（Model-Callable Programs）的关系：
+# 喂入Client中，模型返回调用请求，本地解析请求并执行，执行结果加入以 tool角色加入 Prompt context中，最后返回给大模型：
+response = client.chat.completions.create(
+                model=model,
+                messages=memory.get_messages(),
+                tools=TOOLS,
+                tool_choice="auto",
+                stream=False,
+            )
+msg = response.choices[0].message
+if msg.tool_calls:
+    for tool_call in msg.tool_calls:
+        func_name = tool_call.function.name
+        args = json.loads(tool_call.function.arguments)
+        
+        result = TOOL_FUNCTIONS[func_name](**args)
+
+        memory.add_message(role='tool', content=result, tool_call_id=tool_call.id)
+'''
+
+'''
+那么 Function calling 和 MCP（Model-Callable Programs）的关系：
 - 没有 MCP 时：你直接在 tools.py 里写死工具定义和 Python 函数，通过 Function Calling 让模型调用它们。
 - 引入 MCP 时：
   - 你把 search_pubmed、search_arxiv 等函数封装成一个 MCP Server（之前我用 FastMCP 演示过）。
@@ -51,26 +79,105 @@ import os
 from pathlib import Path 
 
 
-PUBMED_EMAIL = os.getenv("EMAIL", 'example@gmail.com') # 请改成真实邮箱
+# --- 工具描述（OpenAI Function Calling 格式）---
+TOOLS: list = []
+TOOL_FUNCTIONS: dict = {}
 
 
+# --- 辅助函数 ---
+def func_to_tool(func):
+    """将普通函数转换成 OpenAI Function Calling 的工具定义格式"""
+    
+    doc = func.__doc__
+    arg = doc.find('Args:')
+    ret = doc.find('Returns:')
+    exam = doc.find('Example:')
+
+    func_desc = doc[:arg] + doc[exam:]
+    arg_desc = doc[arg:ret]
+
+    properties: dict = {}
+    required: list = []
+    for line in arg_desc.split('\n'):
+        if line.strip() and not line.strip().startswith('Args:'):
+            param_name_type, param_desc = line.strip().split('; ')
+            name, type_ = param_name_type.split(': ')
+            if '=' in type_:
+                # 有默认值的参数
+                type_, default = type_.split(' = ')
+            else:
+                # 没有默认值的参数
+                default = None
+                required.append(name)
+
+            properties[name] = {
+                "type": type_,
+                "default": default,
+                "description": param_desc,
+            }
+            
+    return {
+        "type": "function",
+        "function": {
+            "name": func.__name__,
+            "description": func_desc or "",
+            "parameters": {
+                "type": "object",
+                "properties": properties,
+                "required": required,
+            }
+        }
+    }
+
+
+def tool(func):
+    """装饰器，将普通函数转换成工具定义，并注册到 TOOL_FUNCTIONS 中"""
+    tool_def = func_to_tool(func)
+    TOOLS.append(tool_def)
+    TOOL_FUNCTIONS[func.__name__] = func
+
+    return func
+
+
+# --- 具体工具函数实现 ---
+@tool
 def search_pubmed(query: str, max_results: int = 5) -> str:
-    """在 PubMed 中检索生物医学文献"""
+    """
+    概述：在 PubMed 中检索生物医学文献。
+    使用：支持 PubMed 高级检索语法，包括字段标签（如 [tiab] 标题/摘要、[ta] 期刊名、[au] 作者）、布尔运算符（AND、OR、NOT）和括号。请使用完整的 PubMed 查询表达式，
+    例如："bacillus"[tiab] AND "ai"[tiab] AND "Nature"[ta]，
+    例如："(bacillus"[tiab] OR "lactobacillus"[tiab]) AND ("ai"[tiab] OR "machine learning"[tiab] OR "deep learning"[tiab]) AND "Nature"[ta]，
+    强调：必须使用高级检索语法，否则结果不准确。
+    Args:
+        query: str; PubMed 查询表达式，可使用字段标签和布尔运算符, 例如："bacillus"[tiab] AND "ai"[tiab] AND "Nature"[ta]，例如："(bacillus"[tiab] OR "lactobacillus"[tiab]) AND ("ai"[tiab] OR "machine learning"[tiab] OR "deep learning"[tiab]) AND "Nature"[ta]
+        max_results: int = 5; 最大返回结果数
+    Returns:
+        str: JSON 字符串，包含检索到的文献列表格。
+    Example:
+        search_pubmed('("variational autoencoder"[tiab] OR "VAE"[tiab]) AND "microbiome"[tiab]', max_results=3)
+    """
 
+    PUBMED_EMAIL = os.getenv("EMAIL", 'example@gmail.com') # 请改成真实邮箱
     try:
         pubmed = PubMed(tool="LiteratureAgent", email=PUBMED_EMAIL)
         results = pubmed.query(query, max_results=max_results)
         articles = []
         for article in results:
             title = article.title
-            authors = ', '.join([a['lastname'] for a in article.authors[:3]])
+            authors = ', '.join([a['lastname'] for a in article.authors[:30]])
             pub_date = str(article.publication_date)
-            abstract = (article.abstract[:300] + "...") if article.abstract else "无摘要"
+            abstract = (article.abstract + "...") if article.abstract else "无摘要"
+            doi = article.doi if article.doi else "未知"
+            pmid = article.pubmed_id if article.pubmed_id else "未知"
+            journal = article.journal if article.journal else "未知"
             articles.append({
                 "title": title,
                 "authors": authors,
                 "date": pub_date,
                 "abstract": abstract,
+                "doi": doi,
+                "pmid": pmid,
+                "journal": journal,
             })
         return json.dumps(articles, ensure_ascii=False, indent=2)
     
@@ -78,8 +185,22 @@ def search_pubmed(query: str, max_results: int = 5) -> str:
         return f"PubMed 检索出错: {str(e)}"
 
 
+@tool
 def search_arxiv(query: str, max_results: int = 5) -> str:
-    """在 arXiv 中检索预印本"""
+    """在 arXiv 中检索预印本。
+    概述：在 arXiv 中检索预印本论文，涵盖物理学、数学、计算机科学、生物学、金融等多个学科。
+    使用：支持简单关键词搜索，可使用布尔运算符（AND、OR、NOT）组合多个概念，也可使用英文双引号 "" 进行精确短语匹配。
+    例如："variational autoencoder" AND microbiome，
+    例如："graph neural network" OR "message passing" AND "drug discovery"，
+    强调：请优先使用含义明确的关键词，若用布尔运算符请大写，用引号包裹固定短语以提高查准率。
+    Args:
+        query: str; arXiv 搜索字符串，可包含 AND、OR、NOT 和英文双引号 ""。
+        max_results: int = 5; 最大返回结果数
+    Returns:
+        str: JSON 字符串，包含检索到的文献列表（标题、作者、日期、摘要）。
+    Example:
+        search_arxiv('"variational autoencoder" AND microbiome', max_results=3)
+    """
 
     try:
         client = arxiv.Client()
@@ -92,7 +213,8 @@ def search_arxiv(query: str, max_results: int = 5) -> str:
                 "title": r.title,
                 "authors": ', '.join([a.name for a in r.authors[:3]]),
                 "date": str(r.published),
-                "abstract": (r.summary[:300].replace('\n', ' ')) + "...",
+                # "abstract": (r.summary[:300].replace('\n', ' ')) + "...",
+                "abstract": (r.summary.replace('\n', ' ')) + "...",
             })
         return json.dumps(articles, ensure_ascii=False, indent=2)
     
@@ -100,8 +222,22 @@ def search_arxiv(query: str, max_results: int = 5) -> str:
         return f"arXiv 检索出错: {str(e)}"
 
 
+@tool
 def search_semantic_scholar(query: str, max_results: int = 5) -> str:
-    """在 Semantic Scholar 中检索全学科论文"""
+    """在 Semantic Scholar 中检索全学科论文。
+    概述：在 Semantic Scholar 中检索全学科论文，适合作为 Google Scholar 的替代。
+    使用：支持简单关键词搜索，可使用布尔运算符（AND、OR、NOT）组合概念。还支持 + 前缀表示必须包含该词，- 前缀表示排除该词。建议使用英文双引号 "" 进行精确短语匹配。
+    例如："variational autoencoder" +microbiome，
+    例如："graph neural network" -"image classification" AND "drug discovery"，
+    强调：使用 + 和 - 运算符时不要留空格（如 +microbiome），布尔运算符 AND、OR 需要前后空格。
+    Args:
+        query: str; Semantic Scholar 搜索字符串，可包含 AND、OR、NOT、+、- 运算符和英文双引号 ""。
+        max_results: int = 5; 最大返回结果数
+    Returns:
+        str: JSON 字符串，包含检索到的文献列表（标题、作者、年份、摘要）。
+    Example:
+        search_semantic_scholar('"variational autoencoder" +microbiome', max_results=5)
+    """
 
     try:
         url = "https://api.semanticscholar.org/graph/v1/paper/search"
@@ -120,7 +256,8 @@ def search_semantic_scholar(query: str, max_results: int = 5) -> str:
                 "title": paper.get("title", "未知"),
                 "authors": authors,
                 "date": paper.get("year", "未知"),
-                "abstract": abstract[:300] + ("..." if len(abstract) > 300 else ""),
+                # "abstract": abstract[:300] + ("..." if len(abstract) > 300 else ""),
+                "abstract": abstract + ("..." if len(abstract) > 300 else ""),
             })
         return json.dumps(articles, ensure_ascii=False, indent=2)
     
@@ -128,6 +265,13 @@ def search_semantic_scholar(query: str, max_results: int = 5) -> str:
         return f"Semantic Scholar 检索出错: {str(e)}"
     
 
+# @tool 
+def search_google_scholar(query: str, max_results: int = 5) -> str:
+    """在 Google Scholar 中检索论文（示例实现，实际可用 scholarly 等库）"""
+    pass
+    
+
+# @tool
 def scan_local_files(directory: str) -> str:
     """扫描本地目录下的文件，返回文件列表和基本信息"""
 
@@ -170,6 +314,7 @@ def read_csv(file_path: str) -> str:
     pass
 
 
+# @tool
 def read_file(file_path: str, format: str) -> str:
     '''读取本地文件内容'''
 
@@ -197,82 +342,11 @@ def read_file(file_path: str, format: str) -> str:
         return f"读取文件出错: {str(e)}"
 
 
-# --- 工具描述（OpenAI Function Calling 格式）---
-TOOLS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "search_pubmed",
-            "description": (
-                "概述：在 PubMed 中检索生物医学文献。"
-                "使用：支持 PubMed 高级检索语法，包括字段标签（如 [tiab] 标题/摘要、[ta] 期刊名、[au] 作者）、布尔运算符（AND、OR、NOT）和括号。请使用完整的 PubMed 查询表达式，"
-                '例如："bacillus"[tiab] AND "ai"[tiab] AND "Nature"[ta]'
-                '例如："(bacillus"[tiab] OR "lactobacillus"[tiab]) AND ("ai"[tiab] OR "machine learning"[tiab] OR "deep learning"[tiab]) AND "Nature"[ta]'
-                "强调：必须使用高级检索语法，否则结果不准确。"
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": 'PubMed 查询表达式，可使用字段标签和布尔运算符,例如："bacillus"[tiab] AND "ai"[tiab] AND "Nature"[ta],例如："(bacillus"[tiab] OR "lactobacillus"[tiab]) AND ("ai"[tiab] OR "machine learning"[tiab] OR "deep learning"[tiab]) AND "Nature"[ta]'
-                    },
-                    "max_results": {"type": "integer", "default": 5}
-                },
-                "required": ["query"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "search_arxiv",
-            "description": (
-                "在 arXiv 中检索预印本。使用简单关键词搜索，支持 AND、OR、NOT 和引号精确匹配。"
-                "例如：'variational autoencoder' AND microbiome"
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "arXiv 搜索字符串，可包含 AND、OR 和引号"
-                    },
-                    "max_results": {"type": "integer", "default": 5}
-                },
-                "required": ["query"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "search_semantic_scholar",
-            "description": (
-                "在 Semantic Scholar 中检索全学科论文。使用简单关键词搜索，支持 AND、+ 前缀（必须包含）、- 前缀（排除）。"
-                "例如：'variational autoencoder' +microbiome"
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "Semantic Scholar 查询字符串，可包含 AND、+、- 运算符"
-                    },
-                    "max_results": {"type": "integer", "default": 5}
-                },
-                "required": ["query"]
-            }
-        }
-    }
-]
-
-
-# 工具名 -> 函数映射
-TOOL_FUNCTIONS = {
-    "search_pubmed": search_pubmed,
-    "search_arxiv": search_arxiv,
-    "search_semantic_scholar": search_semantic_scholar,
-    "scan_local_files": scan_local_files,
-    "read_file": read_file,
-}
+if __name__ == "__main__":
+    # 简单测试工具函数
+    print(search_pubmed('("variational autoencoder"[tiab] OR "VAE"[tiab]) AND ("microbiome"[tiab] OR "microbiota"[tiab])', max_results=5))
+    # print(search_arxiv('"variational autoencoder" AND microbiome', max_results=2))
+    # print(search_semantic_scholar('variational autoencoder +microbiome', max_results=2))
+    # print(f'TOOLS: {json.dumps(TOOLS, ensure_ascii=False, indent=2)}')
+    # print(f'\n\n --- TOOLS --- \n\n {TOOLS}')
+    # print(f'\n\n --- TOOL_FUNCTIONS --- \n\n {list(TOOL_FUNCTIONS.keys())}')

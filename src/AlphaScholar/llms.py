@@ -6,10 +6,8 @@ from typing import Optional, Literal
 
 @dataclass
 class Config:
-
     platform: Literal["openai", "deepseek", "cau", "local"] = "local"
     async_model: bool = False  # 是否使用异步模型接口（如 OpenAI 的 streaming）
-
     # URL 和 API_KEY
     url_dict: dict = field(default_factory=lambda: {
         "openai": ["https://api.openai.com/v1", os.getenv("OPENAI_API_KEY", ""), 'gpt-4o'],
@@ -23,10 +21,9 @@ class Config:
 
         if self.platform not in self.url_dict.keys():
             raise ValueError(f"Unsupported platform: {self.platform}")
-        
-        base_url, api_key, model = self.url_dict[self.platform]
-
-        if self.async_model:
-            return (openai.OpenAI(base_url=base_url, api_key=api_key, timeout=60, stream=True), model)
         else:
-            return (openai.OpenAI(base_url=base_url, api_key=api_key), model)
+            base_url, api_key, model = self.url_dict[self.platform]
+            if self.async_model:
+                return (openai.OpenAI(base_url=base_url, api_key=api_key, timeout=60, stream=True), model)
+            else:
+                return (openai.OpenAI(base_url=base_url, api_key=api_key), model)
