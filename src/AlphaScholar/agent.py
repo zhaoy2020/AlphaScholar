@@ -17,10 +17,10 @@ class Agent:
     Memory: short-term memory (conversation history) + long-term memory (file storage)
     '''
 
-    def __init__(self, platform: str, system_prompt: str, memory_file: str):
+    def __init__(self, platform: str, system_prompt: str, memory_file: str, memory_dir: str = './memory'):
         self.client, self.model = Config(platform=platform).create_client_and_model()
         self.tools, self.tool_functions = TOOLS, TOOL_FUNCTIONS
-        self.memory = Memory(storage_path=memory_file)
+        self.memory = Memory(storage_path=f"{memory_dir}/{memory_file}")
         self.memory.add_message(role='system', content=system_prompt)
 
     def run_llm(self, use_tool: bool = False, stream: bool = True, temprature: float = 0.2):
