@@ -87,6 +87,12 @@ TOOL_FUNCTIONS: dict = {}
 # --- 辅助函数 ---
 def func_to_tool(func):
     """将普通函数转换成 OpenAI Function Calling 的工具定义格式"""
+    maps: dict = {
+        "str": "string",
+        "int": "integer",
+        "float": "number",
+        "bool": "boolean",
+    }
     
     doc = func.__doc__
     arg = doc.find('Args:')
@@ -111,7 +117,7 @@ def func_to_tool(func):
                 required.append(name)
 
             properties[name] = {
-                "type": type_,
+                "type": maps.get(type_, type_),
                 "default": default,
                 "description": param_desc,
             }

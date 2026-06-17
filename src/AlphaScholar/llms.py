@@ -11,7 +11,7 @@ class Config:
     # URL 和 API_KEY
     url_dict: dict = field(default_factory=lambda: {
         "openai": ["https://api.openai.com/v1", os.getenv("OPENAI_API_KEY", ""), 'gpt-4o'],
-        "deepseek": ["https://api.deepseek.com/v1", os.getenv("DEEPSEEK_API_KEY", ""), 'deepseek-chat'],
+        "deepseek": ["https://api.deepseek.com", os.getenv("DEEPSEEK_API_KEY", ""), 'deepseek-v4-flash'],
         "cau": ["https://openai.cau.edu.cn/v1", os.getenv("CAU_API_KEY", ""), 'qwen3.6'],
         "local": ["http://localhost:8000/v1", os.getenv("LOCAL_API_KEY", "EMPTY"), '/bmp/backup/zhaosy/ProgramFiles/hf/qwen/Qwen3.6-27B'],
     })
