@@ -1,7 +1,7 @@
 # AlphaScholar — 多智能体文献调研系统
 
 <p align="center">
-  <img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License">
+  <img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License">
   <img src="https://img.shields.io/badge/python-3.10+-green.svg" alt="Python">
   <img src="https://img.shields.io/badge/LLM-OpenAI%20%7C%20DeepSeek-orange.svg" alt="LLM">
 </p>
@@ -187,7 +187,7 @@ AlphaScholar/
 
 ## 许可证
 
-本项目基于 [MIT License](LICENSE) 开源。
+本项目基于 [Apache License 2.0](LICENSE) 开源。
 
 ---
 
