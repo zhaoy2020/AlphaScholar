@@ -154,8 +154,8 @@ class AlphaScholarTwoAgent:
 
         return final_report
     
-    def save_report(self, report: str, filename: str = 'final_report.md'):
-        with open(filename, 'w', encoding='utf-8') as f:
+    def save_report(self, report: str, file_path: str = 'final_report.md'):
+        with open(file_path, 'w', encoding='utf-8') as f:
             f.write(report)
     
 
@@ -246,8 +246,8 @@ class AlphaScholarMultiAgent:
 
         return final_report
     
-    def save_report(self, report: str, filename: str = 'final_report.md'):
-        with open(filename, 'w', encoding='utf-8') as f:
+    def save_report(self, report: str, file_path: str = 'final_report.md'):
+        with open(file_path, 'w', encoding='utf-8') as f:
             f.write(report)
     
 
@@ -256,4 +256,4 @@ if __name__ == "__main__":
     # agent = AlphaScholarTwoAgent(platform=platform)
     agent = AlphaScholarMultiAgent(platform=platform)
     report = agent.run()
-    agent.save_report(report, filename='./reports/vae_on_microbiome_final_report.md')
+    agent.save_report(report, file_path='./reports/vae_on_microbiome_final_report.md')

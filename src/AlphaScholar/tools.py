@@ -147,6 +147,26 @@ def tool(func):
 
 # --- 具体工具函数实现 ---
 @tool
+def get_current_time(format_str: str = "%Y-%m-%d %H:%M:%S") -> str:
+    """获取当前时间。
+    返回当前系统时间，用户可以指定时间格式。
+    Args:
+        format_str: str = "%Y-%m-%d %H:%M:%S"; 时间格式字符串，例如 "%Y-%m-%d" 或 "%H:%M:%S"。
+    Returns:
+        str; 格式化后的当前时间字符串。
+    Example:
+        get_current_time("%Y-%m-%d") -> "2026-06-01"
+    """
+
+    try:
+        from datetime import datetime
+        return datetime.now().strftime(format_str)
+    
+    except Exception as e:
+        return f"获取当前时间出错: {str(e)}"
+
+
+@tool
 def search_pubmed(query: str, max_results: int = 5) -> str:
     """
     概述：在 PubMed 中检索生物医学文献。
