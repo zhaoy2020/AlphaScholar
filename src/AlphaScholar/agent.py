@@ -6,7 +6,7 @@ from llms import Config
 from prompts import SYSTEM_PROMPT, RETRIEVER_PROMPT, ANALYST_PROMPT, WRITER_PROMPT, EVALUATION_PROMPT
 from tools import TOOLS, TOOL_FUNCTIONS
 from memory import Memory 
-from utils import show
+from utils import show, TrainingLogger
 
 
 class Agent:
@@ -86,21 +86,30 @@ class Agent:
 class AlphaScholarTwoAgent:
     '''包含一个 Scholar Agent 负责检索和写作，一个 Reviewer Agent 负责评审和反馈。两者循环迭代，直到报告质量达标或达到最大重试次数。'''
 
-    def __init__(self, platform: str = 'cau'):
-        self.scholar = Agent(platform=platform, system_prompt=SYSTEM_PROMPT, memory_file='agent_memory.json')
+    def __init__(self, platform: str = 'cau', log_path: str = 'training_data.json'):
+        self.platform = platform
+        self.scholar = Agent(platform=platform, system_prompt=SYSTEM_PROMPT, memory_file='scholar_memory.json')
         self.reviewer = Agent(platform=platform, system_prompt=EVALUATION_PROMPT, memory_file='reviewer_memory.json')
+        self.logger = TrainingLogger(log_path=log_path)
 
     def workflow(self, user_input: str, retries: int = 3, quality_threshold: int = 7):
         '''两个Agent 完成整个调研流程（包含工具调用和自动评审）'''
+
+        self.logger.start_session(user_query=user_input, model_config={'platform': self.platform})
 
         self.scholar.memory.add_message(role='user', content=user_input)
         for counter in range(retries):
             show(f'\n\n🔍 第 {counter + 1} 次调研中...\n\n')            
             writer_output = self.scholar.run_llm(use_tool=True, stream=True)
 
+            self.logger.log_conversation(self.scholar.memory.get_messages())
             show('\n\n🔎 评审中...\n\n"')
             self.reviewer.memory.add_message(role='user', content=writer_output)
             evaluation = self.reviewer.run_llm(use_tool=False, stream=False)
+            # 评审结束后，无论结果如何，都重置评审的短期记忆，确保下一轮评审不会被上一次的内容污染
+            self.reviewer.memory.clear_short_term()  # 清理评审记忆，避免信息污染
+            self.reviewer.memory.add_message(role='system', content=EVALUATION_PROMPT)  # 重置评审系统提示
+
             if not evaluation:
                 show("❌ 评审未返回有效内容")
                 break
@@ -118,6 +127,7 @@ class AlphaScholarTwoAgent:
             score = result["score"]
             issues = result["issues"]
             suggestion = result["suggestion"]
+            self.logger.log_evaluation(score=score, issues=issues, suggestion=suggestion)
             show(f"\n\n📊 当前评分: {score}/10\n\n")
             if issues:
                 show(f"\n\n⚠️ 发现问题: {'; '.join(issues)}\n\n")
@@ -126,6 +136,8 @@ class AlphaScholarTwoAgent:
             # --- 判断是否达标 ---
             if score >= quality_threshold:
                 show("\n\n✅ 报告质量达标，输出最终结果。\n\n")
+                self.logger.log_final_report(writer_output)
+                self.logger.end_session()  # 将本次会话记录写入文件
                 return writer_output  # 结束调研循环，返回最终报告
             else:
                 feedback: str = f"报告质量评分只有{score}/10，存在以下问题：{'；'.join(issues)}。\n 建议：{suggestion}。请根据这些意见改进报告，若需补充文献请重新检索。"
@@ -133,8 +145,10 @@ class AlphaScholarTwoAgent:
                 show(f"\n\n🔄 正在进行第 {counter + 1} 次改进...\n\n")
 
         show(f"\n\n⚠️ 已达最大重试次数（{retries}），将使用当前版本。\n\n")
+        self.logger.log_final_report(writer_output)
+        self.logger.end_session()
         return writer_output
-    
+
     def run(self):
         show("\n\n👋 欢迎使用 AlphaScholar Agent 版本！\n\n")
         final_report: str = ""
@@ -153,6 +167,7 @@ class AlphaScholarTwoAgent:
                 show(f"\n\n❌ 发生错误: {e}\n\n")
 
         return final_report
+    
     
     def save_report(self, report: str, file_path: str = 'final_report.md'):
         with open(file_path, 'w', encoding='utf-8') as f:
@@ -187,6 +202,10 @@ class AlphaScholarMultiAgent:
             show('\n\n🔎 审稿人评审中..."')
             self.reviewer.memory.add_message(role='user', content=writer_output)
             evaluation = self.reviewer.run_llm(use_tool=False)
+            # 评审结束后，无论结果如何，都重置评审的短期记忆，确保下一轮评审不会被上一次的内容污染
+            self.reviewer.memory.clear_short_term()  # 清理评审记忆，避免信息污染
+            self.reviewer.memory.add_message(role='system', content=EVALUATION_PROMPT)  # 重置评审系统提示
+            
             if not evaluation:
                 show("❌ 评审未返回有效内容")
                 break
@@ -246,13 +265,14 @@ class AlphaScholarMultiAgent:
 
         return final_report
     
+    
     def save_report(self, report: str, file_path: str = 'final_report.md'):
         with open(file_path, 'w', encoding='utf-8') as f:
             f.write(report)
     
 
 if __name__ == "__main__":
-    platform = 'deepseek'  # 可选 'cau', 'deepseek', 'openai', 'local
+    platform = 'deepseek'  # 可选 'cau', 'deepseek', 'openai', 'local'
     # agent = AlphaScholarTwoAgent(platform=platform)
     agent = AlphaScholarMultiAgent(platform=platform)
     report = agent.run()

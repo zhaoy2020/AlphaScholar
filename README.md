@@ -12,25 +12,13 @@
 
 ## 核心特性
 
-- 🔍 **多源智能检索**  
-  自动为 PubMed、arXiv、Semantic Scholar 生成最合适的检索式（如 PubMed 高级语法 `[tiab]`），克服不同数据库的检索差异。
-
-- 🧠 **多智能体协作**  
-  内置检索员、分析师、作家、审稿人四个专职 Agent，各司其职，通过反馈循环不断优化报告质量。
-
-- 🛠️ **可扩展工具系统**  
-  使用 Python 装饰器 `@tool` 即可将任意函数转换为 OpenAI Function Calling 工具，自动生成 Schema，零样板代码。
-
-- 📝 **自动评审与迭代**  
-  审稿人 Agent 依据文献数量、结构完整性、语言质量等标准进行评分，不达标时自动将修改意见反馈给作家重写，直到质量达标。
-
-- 💾 **长期记忆**  
-  检索到的文献和生成的报告会自动存入 JSON 文件，下次调研时可注入历史记忆，避免重复劳动。
-
-- 🌊 **流式输出**  
-  报告撰写过程支持流式输出，像 ChatGPT 一样逐字显示，交互体验流畅。
-
-- 🔌 **兼容多种 LLM**  
+- 🔍 **多源智能检索**自动为 PubMed、arXiv、Semantic Scholar 生成最合适的检索式（如 PubMed 高级语法 `[tiab]`），克服不同数据库的检索差异。
+- 🧠 **多智能体协作**内置检索员、分析师、作家、审稿人四个专职 Agent，各司其职，通过反馈循环不断优化报告质量。
+- 🛠️ **可扩展工具系统**使用 Python 装饰器 `@tool` 即可将任意函数转换为 OpenAI Function Calling 工具，自动生成 Schema，零样板代码。
+- 📝 **自动评审与迭代**审稿人 Agent 依据文献数量、结构完整性、语言质量等标准进行评分，不达标时自动将修改意见反馈给作家重写，直到质量达标。
+- 💾 **长期记忆**检索到的文献和生成的报告会自动存入 JSON 文件，下次调研时可注入历史记忆，避免重复劳动。
+- 🌊 **流式输出**报告撰写过程支持流式输出，像 ChatGPT 一样逐字显示，交互体验流畅。
+- 🔌 **兼容多种 LLM**
   默认支持 OpenAI、DeepSeek 等兼容接口，只需配置 `base_url` 和 API Key 即可切换模型。
 
 ---
@@ -50,9 +38,9 @@
                      └──────────────────┘
 ```
 
-1. **Retriever** – 解析用户问题，构建检索式，调用学术数据库 API，返回原始文献列表。  
-2. **Analyst** – 去重、筛选、分类文献，输出结构化的文献数据集。  
-3. **Writer** – 根据分类数据撰写 Markdown 格式的综述报告。  
+1. **Retriever** – 解析用户问题，构建检索式，调用学术数据库 API，返回原始文献列表。
+2. **Analyst** – 去重、筛选、分类文献，输出结构化的文献数据集。
+3. **Writer** – 根据分类数据撰写 Markdown 格式的综述报告。
 4. **Reviewer** – 评估报告质量（评分 + 问题 + 建议），若不达标则驱动下一轮“检索 → 分析 → 写作”循环。
 
 ---
@@ -95,6 +83,8 @@ OPENAI_BASE_URL=https://api.openai.com/v1    # 或你的代理地址
 
 ```bash
 python alpha_scholar.py --help
+
+python .\src\AlphaScholar\alpha_scholar.py --agent two --platform cau --report_path ./reports/vae_with_microbiome_twoagent_cau_log.md --log_path ./logs/training_data.json
 ```
 
 按提示输入研究方向（例如 `vae 在微生物组学中的应用`），AlphaScholar 将自动完成检索、分析、写作、评审，并流式输出最终报告。
@@ -166,11 +156,11 @@ AlphaScholar/
 
 ## 路线图
 
-- [x] 多源文献检索（PubMed, arXiv, Semantic Scholar）
-- [x] 多智能体协作流水线
-- [x] 自动评审与迭代优化
-- [x] 长期记忆（JSON 存储）
-- [x] 流式输出
+- [X] 多源文献检索（PubMed, arXiv, Semantic Scholar）
+- [X] 多智能体协作流水线
+- [X] 自动评审与迭代优化
+- [X] 长期记忆（JSON 存储）
+- [X] 流式输出
 - [ ] 全文下载与解析（PDF, DOCX）
 - [ ] 参考文献格式化（BibTeX, APA）
 - [ ] Web 界面（基于 Flet）

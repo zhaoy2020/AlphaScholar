@@ -6,9 +6,9 @@ if __name__ == "__main__":
     args = argparser()
 
     if args.agent == 'two':
-        agent = AlphaScholarTwoAgent(platform=args.platform)
+        agent = AlphaScholarTwoAgent(platform=args.platform, log_path=args.log_path)
     elif args.agent == 'multi':
-        agent = AlphaScholarMultiAgent(platform=args.platform)
+        agent = AlphaScholarMultiAgent(platform=args.platform, log_path=args.log_path)
     else:
         raise ValueError(f"Unsupported agent type: {args.agent}")
 

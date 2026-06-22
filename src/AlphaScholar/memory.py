@@ -135,6 +135,7 @@ class LongTermMemory:
 
 class Memory:
     """Memory management for the agent.
+
     统一接口，包含短期记忆和长期记忆，当前主要使用短期记忆。
     """
 
@@ -142,6 +143,7 @@ class Memory:
         self.short_term = ShortTermMemory()
         self.long_term = LongTermMemory(storage_path=storage_path)
 
+    # --- Short-term memory interface ---
     def add_message(self, role: str, content: str, **kwargs):
         self.short_term.add_message(role, content, **kwargs)
 
@@ -151,6 +153,7 @@ class Memory:
     def clear_short_term(self):
         self.short_term.clear()
 
+    # --- Long-term memory interface ---
     def add_paper(self, **kwargs): 
         self.long_term.add_paper(**kwargs)
 
