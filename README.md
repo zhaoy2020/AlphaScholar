@@ -83,8 +83,13 @@ OPENAI_BASE_URL=https://api.openai.com/v1    # 或你的代理地址
 
 ```bash
 python alpha_scholar.py --help
-
 python .\src\AlphaScholar\alpha_scholar.py --agent two --platform cau --report_path ./reports/vae_with_microbiome_twoagent_cau_log.md --log_path ./logs/training_data.json
+```
+
+或者：
+```bash
+alphascholar --help
+alphascholar --agent two --platform cau --report_path ./reports/vae_with_microbiome_twoagent_cau_log.md --log_path ./logs/training_data.json
 ```
 
 按提示输入研究方向（例如 `vae 在微生物组学中的应用`），AlphaScholar 将自动完成检索、分析、写作、评审，并流式输出最终报告。

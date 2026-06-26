@@ -1,8 +1,8 @@
-from agent import AlphaScholarTwoAgent, AlphaScholarMultiAgent
-from utils import argparser 
+from .agent import AlphaScholarTwoAgent, AlphaScholarMultiAgent
+from .utils import argparser 
 
 
-if __name__ == "__main__":
+def main():
     args = argparser()
 
     if args.agent == 'two':
@@ -14,3 +14,7 @@ if __name__ == "__main__":
 
     final_report = agent.run()
     agent.save_report(final_report, file_path=args.report_path)
+
+
+if __name__ == "__main__":
+    main()

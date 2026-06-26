@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+
+[project]
+name = 'AlphaScholar'
+version = '0.1.0'
+authors = [
+    {name = 'Zhao Yu'},
+]
+description = "A multi-agent system for scholarly research and information retrieval."    
+readme = "README.md"   
+
+[project.urls]
+Repository = "https://github.com/zhaoy2020/AlphaScholar"
+
+
+[project.scripts]
+alphascholar = "AlphaScholar.alpha_scholar:main"
+
+
+[tool.setuptools.packages.find]
+where = ["src"]                        

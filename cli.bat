@@ -1,0 +1,3 @@
+@REM python .\src\AlphaScholar\alpha_scholar.py --agent two --platform local --report_path ./reports/vae_with_microbiome_twoagent_local_log.md --log_path ./logs/training_data.json
+
+@REM alphascholar --help

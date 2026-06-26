@@ -2,11 +2,11 @@
 import json
 import re 
 
-from llms import Config
-from prompts import SYSTEM_PROMPT, RETRIEVER_PROMPT, ANALYST_PROMPT, WRITER_PROMPT, EVALUATION_PROMPT
-from tools import TOOLS, TOOL_FUNCTIONS
-from memory import Memory 
-from utils import show, TrainingLogger
+from .llms import Config
+from .prompts import SYSTEM_PROMPT, RETRIEVER_PROMPT, ANALYST_PROMPT, WRITER_PROMPT, EVALUATION_PROMPT
+from .tools import TOOLS, TOOL_FUNCTIONS
+from .memory import Memory 
+from .utils import show, TrainingLogger
 
 
 class Agent:
