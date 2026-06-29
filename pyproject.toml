@@ -10,7 +10,15 @@ authors = [
     {name = 'Zhao Yu'},
 ]
 description = "A multi-agent system for scholarly research and information retrieval."    
-readme = "README.md"   
+readme = "README.md"  
+
+dependencies = [
+    'reflex',
+    'openai',
+    'pymed',
+    'arxiv',
+    'loguru'
+]
 
 [project.urls]
 Repository = "https://github.com/zhaoy2020/AlphaScholar"

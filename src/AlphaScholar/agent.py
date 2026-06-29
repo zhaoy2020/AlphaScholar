@@ -1,4 +1,4 @@
-# --- Multi-agent ---
+# --- Multi-agent (平行关系) ---
 import json
 import re 
 
@@ -269,11 +269,69 @@ class AlphaScholarMultiAgent:
     def save_report(self, report: str, file_path: str = 'final_report.md'):
         with open(file_path, 'w', encoding='utf-8') as f:
             f.write(report)
-    
+
+
+# --- SubAgent (临时关系) ---
+import openai 
+
+
+class SubAgent:
+    """执行技能的临时子代理"""
+
+    def __init__(self, skill_prompt: str, allowed_tools: list, client: openai.OpenAI, model: str):
+        self.memory = Memory()
+        # 将技能提示词作为系统消息
+        self.memory.add_message(role="system", content=skill_prompt)
+        self.client = client
+        self.model = model
+        # 筛选允许的工具
+        self.tools = [t for t in TOOLS if t["function"]["name"] in allowed_tools]
+        self.tool_functions = {name: fn for name, fn in TOOL_FUNCTIONS.items() if name in allowed_tools}
+
+    def run(self, user_input: str) -> str:
+        self.memory.add_message(role="user", content=user_input)
+        while True:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=self.memory.get_messages(),
+                tools=self.tools,
+                tool_choice="auto",
+                stream=False
+            )
+            msg = response.choices[0].message
+            if msg.tool_calls:
+                # 记录 assistant 的工具调用
+                self.memory.add_message(role="assistant", content=msg.content or "", tool_calls=msg.tool_calls)
+                for tc in msg.tool_calls:
+                    func_name = tc.function.name
+                    args = json.loads(tc.function.arguments)
+                    if func_name in self.tool_functions:
+                        result = self.tool_functions[func_name](**args)
+                    else:
+                        result = f"错误：技能不允许调用 {func_name}"
+                    self.memory.add_message(role="tool", content=result, tool_call_id=tc.id)
+            else:
+                # 无工具调用，返回最终结果
+                self.memory.add_message(role="assistant", content=msg.content)
+                return msg.content or ""
+            
+
+class AlphaScholarWithSubagent:
+    '''支持临时开启 子智能体 (SubAgent)'''
+
+    def __init__(self): ...
+
+    def workflow(self): ...
+
+    def run(self): ...
+            
 
 if __name__ == "__main__":
+    # --- 平行 多Agent ---
     platform = 'deepseek'  # 可选 'cau', 'deepseek', 'openai', 'local'
     # agent = AlphaScholarTwoAgent(platform=platform)
     agent = AlphaScholarMultiAgent(platform=platform)
     report = agent.run()
     agent.save_report(report, file_path='./reports/vae_on_microbiome_final_report.md')
+
+    # --- 临时 多SubAgent ---
